@@ -403,8 +403,11 @@ Format cleanly in markdown with:
 
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+    app.get('*', (req, res) => {
+      if (!req.path.startsWith('/api') && req.path !== '/' && !path.extname(req.path)) {
+        return res.redirect(`/#${req.originalUrl}`);
+      }
+      return res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   } else {
     const vite = await createViteServer({

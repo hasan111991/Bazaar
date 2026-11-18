@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  BrowserRouter,
+  HashRouter,
   Routes,
   Route,
   Outlet,
@@ -8,7 +8,7 @@ import {
   Navigate,
   useParams,
 } from 'react-router-dom';
-import { Store, ShieldAlert, ArrowRight, Loader2 } from 'lucide-react';
+import { Store, ShieldAlert, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
 import { AuthProvider } from './context/AuthContext';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { CartProvider } from './context/CartContext';
@@ -198,86 +198,124 @@ const LegacyOrderSuccessRedirect: React.FC = () => {
   return <Navigate to={`/s/${DEFAULT_SHOP_ID}/order-success/${id || ''}`} replace />;
 };
 
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || 'Unexpected rendering error' };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h1 className="text-xl font-black text-slate-900">Something went wrong</h1>
+          <p className="text-xs text-slate-500 max-w-md">{this.state.message}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Reload Application
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Layer 1: SaaS Platform Marketing & Auth */}
-            <Route path="/" element={<PlatformLandingPage />} />
-            <Route path="/register" element={<RegisterShopPage />} />
-            <Route path="/login" element={<LoginPage />} />
+    <AppErrorBoundary>
+      <AuthProvider>
+        <ToastProvider>
+          <HashRouter>
+            <Routes>
+              {/* Layer 1: SaaS Platform Marketing & Auth */}
+              <Route path="/" element={<PlatformLandingPage />} />
+              <Route path="/register" element={<RegisterShopPage />} />
+              <Route path="/login" element={<LoginPage />} />
 
-            {/* Layer 2: Super Admin Portal */}
-            <Route path="/super-admin" element={<SuperAdminLayout />}>
-              <Route index element={<SuperAdminDashboardPage />} />
-              <Route path="shops" element={<SuperAdminShopsPage />} />
-              <Route path="shops/:shopId" element={<SuperAdminShopDetailPage />} />
-              <Route path="plans" element={<SuperAdminPlansPage />} />
-              <Route path="payments" element={<SuperAdminPaymentsPage />} />
-              <Route path="analytics" element={<SuperAdminAnalyticsPage />} />
-            </Route>
+              {/* Layer 2: Super Admin Portal */}
+              <Route path="/super-admin" element={<SuperAdminLayout />}>
+                <Route index element={<SuperAdminDashboardPage />} />
+                <Route path="shops" element={<SuperAdminShopsPage />} />
+                <Route path="shops/:shopId" element={<SuperAdminShopDetailPage />} />
+                <Route path="plans" element={<SuperAdminPlansPage />} />
+                <Route path="payments" element={<SuperAdminPaymentsPage />} />
+                <Route path="analytics" element={<SuperAdminAnalyticsPage />} />
+              </Route>
 
-            {/* Layer 3: Shop Admin Management Portal */}
-            <Route path="/dashboard" element={<ShopDashboardLayout />}>
-              <Route index element={<ShopOverviewPage />} />
-              <Route path="products" element={<ShopProductsPage />} />
-              <Route path="categories" element={<ShopCategoriesPage />} />
-              <Route path="orders" element={<ShopOrdersPage />} />
-              <Route path="customers" element={<ShopCustomersPage />} />
-              <Route path="inventory" element={<ShopInventoryPage />} />
-              <Route path="coupons" element={<ShopCouponsPage />} />
-              <Route path="banners" element={<ShopBannersPage />} />
-              <Route path="appearance" element={<ShopAppearancePage />} />
-              <Route path="settings" element={<ShopSettingsPage />} />
-              <Route path="staff" element={<ShopStaffPage />} />
-              <Route path="reports" element={<ShopReportsPage />} />
-              <Route path="subscription" element={<ShopSubscriptionPage />} />
-              <Route path="profile" element={<ShopProfilePage />} />
-            </Route>
+              {/* Layer 3: Shop Admin Management Portal */}
+              <Route path="/dashboard" element={<ShopDashboardLayout />}>
+                <Route index element={<ShopOverviewPage />} />
+                <Route path="products" element={<ShopProductsPage />} />
+                <Route path="categories" element={<ShopCategoriesPage />} />
+                <Route path="orders" element={<ShopOrdersPage />} />
+                <Route path="customers" element={<ShopCustomersPage />} />
+                <Route path="inventory" element={<ShopInventoryPage />} />
+                <Route path="coupons" element={<ShopCouponsPage />} />
+                <Route path="banners" element={<ShopBannersPage />} />
+                <Route path="appearance" element={<ShopAppearancePage />} />
+                <Route path="settings" element={<ShopSettingsPage />} />
+                <Route path="staff" element={<ShopStaffPage />} />
+                <Route path="reports" element={<ShopReportsPage />} />
+                <Route path="subscription" element={<ShopSubscriptionPage />} />
+                <Route path="profile" element={<ShopProfilePage />} />
+              </Route>
 
-            {/* Layer 4: Multi-Tenant Public Storefronts */}
-            <Route path="/s/:shopSlug" element={<TenantRouteWrapper />}>
-              <Route index element={<HomePage />} />
-              <Route path="shop" element={<ShopPage />} />
-              <Route path="product/:id" element={<ProductDetailPage />} />
-              <Route path="cart" element={<CartPage />} />
-              <Route path="checkout" element={<CheckoutPage />} />
-              <Route path="order-success/:id" element={<OrderSuccessPage />} />
-              <Route path="account" element={<AccountPage />} />
-              <Route path="tracking" element={<OrderTrackingPage />} />
-              <Route path="contact" element={<ContactPage />} />
-              <Route path="about" element={<AboutPage />} />
-              <Route path="faq" element={<FAQPage />} />
-              <Route path="return-policy" element={<ReturnPolicyPage />} />
-              <Route path="terms" element={<TermsPage />} />
-              <Route path="privacy" element={<PrivacyPage />} />
-              <Route path="*" element={<StoreNotFoundPage />} />
-            </Route>
+              {/* Layer 4: Multi-Tenant Public Storefronts */}
+              <Route path="/s/:shopSlug" element={<TenantRouteWrapper />}>
+                <Route index element={<HomePage />} />
+                <Route path="shop" element={<ShopPage />} />
+                <Route path="product/:id" element={<ProductDetailPage />} />
+                <Route path="cart" element={<CartPage />} />
+                <Route path="checkout" element={<CheckoutPage />} />
+                <Route path="order-success/:id" element={<OrderSuccessPage />} />
+                <Route path="account" element={<AccountPage />} />
+                <Route path="tracking" element={<OrderTrackingPage />} />
+                <Route path="contact" element={<ContactPage />} />
+                <Route path="about" element={<AboutPage />} />
+                <Route path="faq" element={<FAQPage />} />
+                <Route path="return-policy" element={<ReturnPolicyPage />} />
+                <Route path="terms" element={<TermsPage />} />
+                <Route path="privacy" element={<PrivacyPage />} />
+                <Route path="*" element={<StoreNotFoundPage />} />
+              </Route>
 
-            {/* Legacy Flagship BazaarPK Route Redirects */}
-            <Route path="/shop" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/shop`} replace />} />
-            <Route path="/product/:id" element={<LegacyProductRedirect />} />
-            <Route path="/cart" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/cart`} replace />} />
-            <Route path="/checkout" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/checkout`} replace />} />
-            <Route path="/order-success/:id" element={<LegacyOrderSuccessRedirect />} />
-            <Route path="/account" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/account`} replace />} />
-            <Route path="/tracking" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/tracking`} replace />} />
-            <Route path="/contact" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/contact`} replace />} />
-            <Route path="/about" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/about`} replace />} />
-            <Route path="/faq" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/faq`} replace />} />
-            <Route path="/return-policy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/return-policy`} replace />} />
-            <Route path="/terms" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/terms`} replace />} />
-            <Route path="/privacy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/privacy`} replace />} />
-            <Route path="/admin/*" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/admin" element={<Navigate to="/dashboard" replace />} />
+              {/* Legacy Flagship BazaarPK Route Redirects */}
+              <Route path="/shop" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/shop`} replace />} />
+              <Route path="/product/:id" element={<LegacyProductRedirect />} />
+              <Route path="/cart" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/cart`} replace />} />
+              <Route path="/checkout" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/checkout`} replace />} />
+              <Route path="/order-success/:id" element={<LegacyOrderSuccessRedirect />} />
+              <Route path="/account" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/account`} replace />} />
+              <Route path="/tracking" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/tracking`} replace />} />
+              <Route path="/contact" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/contact`} replace />} />
+              <Route path="/about" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/about`} replace />} />
+              <Route path="/faq" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/faq`} replace />} />
+              <Route path="/return-policy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/return-policy`} replace />} />
+              <Route path="/terms" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/terms`} replace />} />
+              <Route path="/privacy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/privacy`} replace />} />
+              <Route path="/admin/*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/admin" element={<Navigate to="/dashboard" replace />} />
 
-            {/* Platform-wide Fallback */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </ToastProvider>
-    </AuthProvider>
+              {/* Platform-wide Fallback */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </HashRouter>
+        </ToastProvider>
+      </AuthProvider>
+    </AppErrorBoundary>
   );
 }

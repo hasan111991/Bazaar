@@ -50,15 +50,27 @@ export const PlatformLandingPage: React.FC = () => {
           </Link>
 
           <nav className="hidden md:flex items-center gap-7 text-xs font-semibold text-slate-600">
-            <a href="#capabilities" className="hover:text-slate-900 transition">
+            <button
+              type="button"
+              onClick={() => document.getElementById('capabilities')?.scrollIntoView({ behavior: 'smooth' })}
+              className="hover:text-slate-900 transition cursor-pointer"
+            >
               Capabilities
-            </a>
-            <a href="#pricing" className="hover:text-slate-900 transition">
+            </button>
+            <button
+              type="button"
+              onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })}
+              className="hover:text-slate-900 transition cursor-pointer"
+            >
               Pricing (PKR)
-            </a>
-            <a href="#stores" className="hover:text-slate-900 transition">
+            </button>
+            <button
+              type="button"
+              onClick={() => document.getElementById('stores')?.scrollIntoView({ behavior: 'smooth' })}
+              className="hover:text-slate-900 transition cursor-pointer"
+            >
               Live Stores
-            </a>
+            </button>
             <Link to={`/s/${DEFAULT_SHOP_ID}`} className="hover:text-[#065F46] transition">
               Flagship Demo Store
             </Link>

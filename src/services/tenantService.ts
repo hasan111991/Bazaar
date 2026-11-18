@@ -348,7 +348,8 @@ export async function createShopOrder(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...orderData, shopId, userId: 'guest' }),
       });
-      if (response.ok) {
+      const contentType = response.headers.get('content-type') || '';
+      if (response.ok && contentType.includes('application/json')) {
         const serverOrder = await response.json();
         if (!serverOrder.requiresClientAuthWrite) {
           return serverOrder as Order;
@@ -537,7 +538,8 @@ export async function trackShopOrder(shopId: string, ref: string): Promise<Order
 
   try {
     const res = await fetch(`/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(trimmed)}`);
-    if (res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
       return (await res.json()) as Order;
     }
   } catch {}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redirecting — BazaarPK Cloud</title>
+    <script>
+      (function () {
+        var knownAppRoots = [
+          'register',
+          'login',
+          'super-admin',
+          'dashboard',
+          's',
+          'shop',
+          'product',
+          'cart',
+          'checkout',
+          'order-success',
+          'account',
+          'tracking',
+          'contact',
+          'about',
+          'faq',
+          'return-policy',
+          'terms',
+          'privacy',
+          'admin'
+        ];
+        var l = window.location;
+        var parts = l.pathname.split('/').filter(Boolean);
+        var baseSegments = 0;
+        if (parts.length > 0 && knownAppRoots.indexOf(parts[0]) === -1) {
+          // Project site hosted at /<repo-name>/...
+          baseSegments = 1;
+        }
+        var basePath = baseSegments === 1 ? '/' + parts[0] + '/' : '/';
+        var routePath = '/' + parts.slice(baseSegments).join('/');
+        var target =
+          l.protocol +
+          '//' +
+          l.host +
+          basePath +
+          '#' +
+          routePath +
+          (l.search || '') +
+          (l.hash ? l.hash.replace(/^#/, '') : '');
+        l.replace(target);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>
