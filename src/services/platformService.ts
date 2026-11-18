@@ -1,0 +1,842 @@
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  writeBatch,
+  orderBy,
+  limit,
+} from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
+import {
+  Shop,
+  ShopStatus,
+  SubscriptionPlan,
+  PlatformSettings,
+  PlatformPayment,
+  ActivityLog,
+  BillingCycle,
+  StoreSettings,
+  ShopMembership,
+  StaffMember,
+} from '../types';
+import {
+  DEFAULT_SUBSCRIPTION_PLANS,
+  DEFAULT_PLATFORM_SETTINGS,
+  INITIAL_SETTINGS,
+  INITIAL_CATEGORIES,
+  sanitizeShopSlug,
+  isValidShopSlug,
+} from '../data/seedData';
+import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
+
+export function stripUndefined<T>(obj: T): T {
+  if (Array.isArray(obj)) {
+    return obj.map((item) => stripUndefined(item)) as unknown as T;
+  }
+  if (obj !== null && typeof obj === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, any>)) {
+      if (value !== undefined) {
+        cleaned[key] = stripUndefined(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return obj;
+}
+
+// ====================================================
+// SUBSCRIPTION PLANS & PLATFORM SETTINGS
+// ====================================================
+
+export async function getSubscriptionPlans(activeOnly = false): Promise<SubscriptionPlan[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_plans'));
+    if (snap.empty) {
+      return activeOnly
+        ? DEFAULT_SUBSCRIPTION_PLANS.filter((p) => p.isActive)
+        : DEFAULT_SUBSCRIPTION_PLANS;
+    }
+    const list: SubscriptionPlan[] = [];
+    snap.forEach((d) => {
+      list.push({ ...(d.data() as SubscriptionPlan), id: d.id });
+    });
+    const sorted = list.sort((a, b) => (a.order || 0) - (b.order || 0));
+    return activeOnly ? sorted.filter((p) => p.isActive) : sorted;
+  } catch (err) {
+    console.warn('Could not load subscription plans from Firestore, using defaults:', err);
+    return activeOnly
+      ? DEFAULT_SUBSCRIPTION_PLANS.filter((p) => p.isActive)
+      : DEFAULT_SUBSCRIPTION_PLANS;
+  }
+}
+
+export async function seedDefaultPlansIfEmpty(): Promise<void> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_plans'));
+    if (snap.empty) {
+      const batch = writeBatch(db);
+      for (const plan of DEFAULT_SUBSCRIPTION_PLANS) {
+        batch.set(doc(db, 'platform_plans', plan.id), stripUndefined({
+          ...plan,
+          createdAt: new Date().toISOString(),
+        }));
+      }
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn('Seed default plans note:', err);
+  }
+}
+
+export async function saveSubscriptionPlan(plan: Partial<SubscriptionPlan>): Promise<string> {
+  const id = plan.id || sanitizeShopSlug(plan.name || `plan-${Date.now()}`);
+  const now = new Date().toISOString();
+  const payload = stripUndefined<SubscriptionPlan>({
+    id,
+    name: plan.name || 'Custom Plan',
+    slug: plan.slug || id,
+    description: plan.description || '',
+    monthlyPrice: Number(plan.monthlyPrice) || 0,
+    yearlyPrice: Number(plan.yearlyPrice) || 0,
+    durationDays: Number(plan.durationDays) || 30,
+    maxProducts: Number(plan.maxProducts) || 50,
+    maxStorageMB: Number(plan.maxStorageMB) || 100,
+    maxStaff: Number(plan.maxStaff) || 1,
+    features: plan.features || {
+      customBranding: true,
+      coupons: true,
+      banners: true,
+      analytics: true,
+      selfPickup: true,
+      buyingGuide: true,
+      staffAccounts: true,
+      customPages: true,
+    },
+    isActive: plan.isActive !== false,
+    isPopular: Boolean(plan.isPopular),
+    order: Number(plan.order) || 1,
+    createdAt: plan.createdAt || now,
+    updatedAt: now,
+  });
+
+  try {
+    await setDoc(doc(db, 'platform_plans', id), payload, { merge: true });
+    await logPlatformActivity('Updated Plan', 'plan', id, `Saved plan ${payload.name} (Rs. ${payload.monthlyPrice}/mo)`);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `platform_plans/${id}`);
+  }
+}
+
+export async function deleteSubscriptionPlan(planId: string): Promise<void> {
+  const shops = await getAllShopsAdmin();
+  const inUse = shops.some((s) => s.subscription?.planId === planId);
+  if (inUse) {
+    throw new Error('Cannot delete a subscription plan currently assigned to active shops. Disable it instead.');
+  }
+  try {
+    await deleteDoc(doc(db, 'platform_plans', planId));
+    await logPlatformActivity('Deleted Plan', 'plan', planId, `Deleted plan ${planId}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `platform_plans/${planId}`);
+  }
+}
+
+export async function getPlatformSettings(): Promise<PlatformSettings> {
+  try {
+    const snap = await getDoc(doc(db, 'platform_settings', 'general'));
+    if (snap.exists()) {
+      const data = snap.data() as Partial<PlatformSettings>;
+      return {
+        ...DEFAULT_PLATFORM_SETTINGS,
+        ...data,
+        easypaisaDetails: {
+          ...DEFAULT_PLATFORM_SETTINGS.easypaisaDetails,
+          ...(data.easypaisaDetails || {}),
+        },
+        jazzcashDetails: {
+          ...DEFAULT_PLATFORM_SETTINGS.jazzcashDetails,
+          ...(data.jazzcashDetails || {}),
+        },
+        bankDetails: {
+          ...DEFAULT_PLATFORM_SETTINGS.bankDetails,
+          ...(data.bankDetails || {}),
+        },
+      };
+    }
+    return DEFAULT_PLATFORM_SETTINGS;
+  } catch {
+    return DEFAULT_PLATFORM_SETTINGS;
+  }
+}
+
+export async function updatePlatformSettings(settings: PlatformSettings): Promise<void> {
+  try {
+    await setDoc(
+      doc(db, 'platform_settings', 'general'),
+      stripUndefined({ ...settings, updatedAt: new Date().toISOString() }),
+      { merge: true }
+    );
+    await logPlatformActivity('Updated Platform Settings', 'settings', 'general', 'Updated Super Admin billing & platform info');
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'platform_settings/general');
+  }
+}
+
+// ====================================================
+// SHOP RESOLUTION, REGISTRATION & MANAGEMENT
+// ====================================================
+
+export async function checkSlugAvailability(rawSlug: string): Promise<{ available: boolean; cleanSlug: string; reason?: string }> {
+  const cleanSlug = sanitizeShopSlug(rawSlug);
+  if (!isValidShopSlug(cleanSlug)) {
+    return {
+      available: false,
+      cleanSlug,
+      reason: 'Slug must be 3–50 lowercase letters, numbers, or hyphens (cannot be a reserved route).',
+    };
+  }
+  try {
+    const snap = await getDoc(doc(db, 'shop_slugs', cleanSlug));
+    if (snap.exists()) {
+      return { available: false, cleanSlug, reason: 'This shop URL slug is already taken.' };
+    }
+    return { available: true, cleanSlug };
+  } catch (err) {
+    console.warn('Slug check warning:', err);
+    return { available: true, cleanSlug };
+  }
+}
+
+export async function getShopBySlug(slug: string): Promise<Shop | null> {
+  const cleanSlug = sanitizeShopSlug(slug);
+  if (!cleanSlug) return null;
+  try {
+    const slugSnap = await getDoc(doc(db, 'shop_slugs', cleanSlug));
+    if (slugSnap.exists()) {
+      const shopId = slugSnap.data().shopId;
+      const shopSnap = await getDoc(doc(db, 'shops', shopId));
+      if (shopSnap.exists()) {
+        return { ...(shopSnap.data() as Shop), id: shopSnap.id };
+      }
+    }
+    // Fallback direct lookup if shopId == slug
+    const directSnap = await getDoc(doc(db, 'shops', cleanSlug));
+    if (directSnap.exists()) {
+      return { ...(directSnap.data() as Shop), id: directSnap.id };
+    }
+    return null;
+  } catch (err) {
+    console.warn('getShopBySlug error:', err);
+    return null;
+  }
+}
+
+export async function getShopById(shopId: string): Promise<Shop | null> {
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId));
+    return snap.exists() ? { ...(snap.data() as Shop), id: snap.id } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getActiveDirectoryShops(): Promise<Shop[]> {
+  try {
+    const q = query(collection(db, 'shops'), where('status', '==', 'active'));
+    const snap = await getDocs(q);
+    const list: Shop[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Shop), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllShopsAdmin(): Promise<Shop[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops'));
+    const list: Shop[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Shop), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'shops');
+  }
+}
+
+export async function registerNewShop(input: {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  ownerPhone: string;
+  shopName: string;
+  shopSlug: string;
+  city: string;
+  address: string;
+  planId: string;
+  billingCycle: BillingCycle;
+  paymentProof?: {
+    method: 'easypaisa' | 'jazzcash' | 'bank_transfer';
+    transactionId: string;
+    senderNumber: string;
+    proofUrl: string;
+  };
+}): Promise<Shop> {
+  const slugCheck = await checkSlugAvailability(input.shopSlug);
+  if (!slugCheck.available) {
+    throw new Error(slugCheck.reason || 'Shop URL slug is unavailable.');
+  }
+
+  const plans = await getSubscriptionPlans();
+  const chosenPlan = plans.find((p) => p.id === input.planId) || DEFAULT_SUBSCRIPTION_PLANS[0];
+  const isFree = chosenPlan.monthlyPrice === 0;
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  // Security rules ensure client registration starts on free-starter active OR 14-day trial
+  // (paid activation requires Super Admin approval of submitted payment proof)
+  const trialDays = isFree ? (chosenPlan.durationDays || 365) : 14;
+  const expiryDate = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000).toISOString();
+  const shopId = slugCheck.cleanSlug;
+
+  const newShop: Shop = {
+    id: shopId,
+    slug: slugCheck.cleanSlug,
+    name: input.shopName.trim(),
+    ownerId: input.ownerId,
+    ownerName: input.ownerName.trim(),
+    ownerEmail: input.ownerEmail.trim(),
+    ownerPhone: input.ownerPhone.trim(),
+    city: input.city.trim(),
+    address: input.address.trim(),
+    logoUrl: '',
+    status: 'active',
+    subscription: {
+      planId: chosenPlan.id,
+      planName: chosenPlan.name,
+      status: isFree ? 'active' : 'trial',
+      billingCycle: input.billingCycle,
+      pricePaid: 0,
+      startDate: nowIso,
+      expiryDate,
+      autoRenew: false,
+    },
+    usage: {
+      productsCount: 0,
+      ordersCount: 0,
+      storageBytes: 0,
+      staffCount: 1,
+    },
+    theme: {
+      primaryColor: '#065f46',
+      accentColor: '#d97706',
+      heroTitle: `Welcome to ${input.shopName.trim()}`,
+      heroSubtitle: `Authentic curated essentials delivered across Pakistan with Cash on Delivery & Self-Pickup.`,
+      showTestimonials: true,
+      showBuyingGuide: chosenPlan.features.buyingGuide,
+    },
+    lastActivityAt: nowIso,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  try {
+    // Step 1: Reserve slug first
+    await setDoc(doc(db, 'shop_slugs', slugCheck.cleanSlug), {
+      slug: slugCheck.cleanSlug,
+      shopId,
+      ownerId: input.ownerId,
+      name: newShop.name,
+      createdAt: nowIso,
+    });
+
+    // Step 2: Create master shop doc so subsequent security rule get() checks succeed
+    await setDoc(doc(db, 'shops', shopId), stripUndefined(newShop));
+
+    // Step 3: Batch initialize tenant staff owner, membership, settings, and starter categories
+    const batch = writeBatch(db);
+
+    const ownerStaff: StaffMember = {
+      uid: input.ownerId,
+      email: input.ownerEmail.trim(),
+      name: input.ownerName.trim(),
+      role: 'shop_owner',
+      permissions: [
+        'overview',
+        'products',
+        'categories',
+        'orders',
+        'customers',
+        'inventory',
+        'coupons',
+        'banners',
+        'appearance',
+        'settings',
+        'staff',
+        'reports',
+        'subscription',
+      ],
+      status: 'active',
+      createdAt: nowIso,
+    };
+    batch.set(doc(db, 'shops', shopId, 'staff', input.ownerId), stripUndefined(ownerStaff));
+
+    const membership: ShopMembership = {
+      shopId,
+      shopName: newShop.name,
+      shopSlug: newShop.slug,
+      role: 'shop_owner',
+      joinedAt: nowIso,
+    };
+    batch.set(doc(db, 'users', input.ownerId, 'shopMemberships', shopId), stripUndefined(membership));
+
+    const initialSettings: StoreSettings = {
+      ...INITIAL_SETTINGS,
+      siteName: newShop.name,
+      contactPhone: input.ownerPhone.trim(),
+      whatsappNumber: input.ownerPhone.trim(),
+      contactEmail: input.ownerEmail.trim(),
+      address: `${input.address.trim()}, ${input.city.trim()}`,
+      city: input.city.trim(),
+      bankDetails: {
+        ...INITIAL_SETTINGS.bankDetails,
+        accountTitle: newShop.name,
+      },
+      easypaisaDetails: {
+        ...INITIAL_SETTINGS.easypaisaDetails,
+        accountTitle: newShop.name,
+        accountNumber: input.ownerPhone.trim(),
+      },
+      jazzcashDetails: {
+        ...INITIAL_SETTINGS.jazzcashDetails,
+        accountTitle: newShop.name,
+        accountNumber: input.ownerPhone.trim(),
+      },
+      selfPickupDetails: {
+        ...INITIAL_SETTINGS.selfPickupDetails,
+        title: `${newShop.name} Outlet (${input.city.trim()})`,
+        address: input.address.trim(),
+        city: input.city.trim(),
+        contactPhone: input.ownerPhone.trim(),
+      },
+    };
+    batch.set(doc(db, 'shops', shopId, 'settings', 'general'), stripUndefined(initialSettings));
+
+    for (const cat of INITIAL_CATEGORIES.slice(0, 4)) {
+      batch.set(doc(db, 'shops', shopId, 'categories', cat.id), stripUndefined({ ...cat, shopId }));
+    }
+
+    await batch.commit();
+
+    // Step 4: If user selected paid plan and submitted payment proof, record payment request
+    if (!isFree && input.paymentProof) {
+      const amount = input.billingCycle === 'yearly' ? chosenPlan.yearlyPrice : chosenPlan.monthlyPrice;
+      await submitSubscriptionPayment({
+        shopId,
+        shopName: newShop.name,
+        shopSlug: newShop.slug,
+        ownerId: input.ownerId,
+        ownerEmail: input.ownerEmail,
+        planId: chosenPlan.id,
+        planName: chosenPlan.name,
+        billingCycle: input.billingCycle,
+        amount,
+        method: input.paymentProof.method,
+        transactionId: input.paymentProof.transactionId,
+        senderNumber: input.paymentProof.senderNumber,
+        proofUrl: input.paymentProof.proofUrl,
+      });
+    }
+
+    await logPlatformActivity('Registered Shop', 'shop', shopId, `New shop "${newShop.name}" registered on ${chosenPlan.name}`);
+    return newShop;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}`);
+  }
+}
+
+export async function updateShopStatus(shopId: string, status: ShopStatus): Promise<void> {
+  const now = new Date().toISOString();
+  try {
+    await updateDoc(doc(db, 'shops', shopId), {
+      status,
+      updatedAt: now,
+    });
+    await logPlatformActivity(`Shop ${status}`, 'shop', shopId, `Changed shop ${shopId} status to ${status}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
+  }
+}
+
+export async function assignShopSubscription(
+  shopId: string,
+  params: {
+    planId: string;
+    billingCycle: BillingCycle;
+    durationDays?: number;
+    isFreeOverride?: boolean;
+    status?: 'active' | 'trial' | 'expired' | 'cancelled';
+    pricePaid?: number;
+  }
+): Promise<void> {
+  const plans = await getSubscriptionPlans();
+  const plan = plans.find((p) => p.id === params.planId) || DEFAULT_SUBSCRIPTION_PLANS[0];
+  const days = params.durationDays || (params.billingCycle === 'yearly' ? 365 : plan.durationDays || 30);
+  const now = new Date();
+  const startDate = now.toISOString();
+  const expiryDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+
+  const subscription = {
+    planId: plan.id,
+    planName: plan.name,
+    status: params.status || 'active',
+    billingCycle: params.billingCycle,
+    pricePaid: params.isFreeOverride ? 0 : (params.pricePaid ?? (params.billingCycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice)),
+    startDate,
+    expiryDate,
+    isFreeOverride: Boolean(params.isFreeOverride),
+  };
+
+  try {
+    await updateDoc(doc(db, 'shops', shopId), {
+      subscription: stripUndefined(subscription),
+      status: 'active',
+      updatedAt: startDate,
+    });
+    await logPlatformActivity(
+      'Updated Shop Plan',
+      'shop',
+      shopId,
+      `Assigned ${plan.name} (${params.billingCycle}, ${days}d${params.isFreeOverride ? ' FREE OVERRIDE' : ''})`
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
+  }
+}
+
+export async function extendShopSubscription(shopId: string, extraDays: number): Promise<void> {
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId));
+    if (!snap.exists()) throw new Error('Shop not found');
+    const shop = snap.data() as Shop;
+    const currentExpiry = shop.subscription?.expiryDate ? new Date(shop.subscription.expiryDate) : new Date();
+    const baseDate = currentExpiry > new Date() ? currentExpiry : new Date();
+    const nextExpiry = new Date(baseDate.getTime() + extraDays * 24 * 60 * 60 * 1000).toISOString();
+
+    await updateDoc(doc(db, 'shops', shopId), {
+      'subscription.expiryDate': nextExpiry,
+      'subscription.status': 'active',
+      updatedAt: new Date().toISOString(),
+    });
+    await logPlatformActivity('Extended Subscription', 'shop', shopId, `Extended ${shop.name} by ${extraDays} days`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
+  }
+}
+
+export async function deleteShopComplete(shopId: string): Promise<void> {
+  try {
+    const shop = await getShopById(shopId);
+    const subcollections = [
+      'products',
+      'categories',
+      'banners',
+      'orders',
+      'order_tracking',
+      'coupons',
+      'reviews',
+      'inventory_logs',
+      'contact_messages',
+      'settings',
+      'staff',
+      'notifications',
+      'activity_logs',
+      'customers',
+      'pages',
+    ];
+
+    for (const sub of subcollections) {
+      const snap = await getDocs(collection(db, 'shops', shopId, sub));
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+
+    if (shop?.slug) {
+      await deleteDoc(doc(db, 'shop_slugs', shop.slug)).catch(() => {});
+    }
+    if (shop?.ownerId) {
+      await deleteDoc(doc(db, 'users', shop.ownerId, 'shopMemberships', shopId)).catch(() => {});
+    }
+    await deleteDoc(doc(db, 'shops', shopId));
+    await logPlatformActivity('Deleted Shop', 'shop', shopId, `Permanently removed shop ${shop?.name || shopId}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}`);
+  }
+}
+
+// ====================================================
+// SUBSCRIPTION PAYMENT PROOFS & APPROVALS
+// ====================================================
+
+export async function submitSubscriptionPayment(
+  data: Omit<PlatformPayment, 'id' | 'status' | 'createdAt'>
+): Promise<string> {
+  const id = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  const payload = stripUndefined<PlatformPayment>({
+    ...data,
+    id,
+    status: 'pending',
+    createdAt: now,
+  });
+  try {
+    await setDoc(doc(db, 'platform_payments', id), payload);
+    await logPlatformActivity(
+      'Submitted Subscription Payment',
+      'payment',
+      id,
+      `${data.shopName} submitted Rs. ${data.amount} via ${data.method.toUpperCase()} (TID: ${data.transactionId})`
+    );
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `platform_payments/${id}`);
+  }
+}
+
+export async function getAllPlatformPayments(): Promise<PlatformPayment[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_payments'));
+    const list: PlatformPayment[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as PlatformPayment), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'platform_payments');
+  }
+}
+
+export async function getPaymentsByShop(shopId: string): Promise<PlatformPayment[]> {
+  try {
+    const q = query(collection(db, 'platform_payments'), where('shopId', '==', shopId));
+    const snap = await getDocs(q);
+    const list: PlatformPayment[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as PlatformPayment), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function approvePlatformPayment(paymentId: string): Promise<void> {
+  try {
+    const paySnap = await getDoc(doc(db, 'platform_payments', paymentId));
+    if (!paySnap.exists()) throw new Error('Payment request not found');
+    const payment = paySnap.data() as PlatformPayment;
+    const now = new Date().toISOString();
+
+    await updateDoc(doc(db, 'platform_payments', paymentId), {
+      status: 'approved',
+      reviewedBy: auth.currentUser?.email || 'Super Admin',
+      reviewedAt: now,
+    });
+
+    await assignShopSubscription(payment.shopId, {
+      planId: payment.planId,
+      billingCycle: payment.billingCycle,
+      durationDays: payment.billingCycle === 'yearly' ? 365 : 30,
+      pricePaid: payment.amount,
+      status: 'active',
+    });
+
+    await logPlatformActivity(
+      'Approved Payment',
+      'payment',
+      paymentId,
+      `Approved Rs. ${payment.amount} for ${payment.shopName} (${payment.planName})`
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `platform_payments/${paymentId}`);
+  }
+}
+
+export async function rejectPlatformPayment(paymentId: string, reason: string): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    await updateDoc(doc(db, 'platform_payments', paymentId), {
+      status: 'rejected',
+      rejectionReason: reason || 'Payment verification failed or TID invalid.',
+      reviewedBy: auth.currentUser?.email || 'Super Admin',
+      reviewedAt: now,
+    });
+    await logPlatformActivity('Rejected Payment', 'payment', paymentId, `Rejected payment ${paymentId}: ${reason}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `platform_payments/${paymentId}`);
+  }
+}
+
+// ====================================================
+// PLATFORM ANALYTICS & ACTIVITY LOGS
+// ====================================================
+
+export async function logPlatformActivity(
+  action: string,
+  targetType: ActivityLog['targetType'],
+  targetId: string,
+  details: string
+): Promise<void> {
+  try {
+    const id = `plog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const payload: ActivityLog = {
+      id,
+      actorId: auth.currentUser?.uid || 'system',
+      actorEmail: auth.currentUser?.email || 'system',
+      action,
+      targetType,
+      targetId,
+      details,
+      createdAt: new Date().toISOString(),
+    };
+    await setDoc(doc(db, 'platform_activity_logs', id), payload);
+  } catch (err) {
+    console.warn('Could not log platform activity:', err);
+  }
+}
+
+export async function getPlatformActivityLogs(maxItems = 50): Promise<ActivityLog[]> {
+  try {
+    const q = query(collection(db, 'platform_activity_logs'), orderBy('createdAt', 'desc'), limit(maxItems));
+    const snap = await getDocs(q);
+    const list: ActivityLog[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as ActivityLog), id: d.id }));
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+export interface PlatformAnalyticsSummary {
+  totalShops: number;
+  activeShops: number;
+  inactiveShops: number;
+  suspendedShops: number;
+  freeShops: number;
+  paidShops: number;
+  trialShops: number;
+  expiredSubscriptions: number;
+  pendingPaymentsCount: number;
+  totalSubscriptionRevenue: number;
+  monthlyRecurringRevenue: number;
+  shopsRegisteredThisMonth: number;
+  totalProductsAcrossShops: number;
+  totalOrdersAcrossShops: number;
+  totalRegisteredOwners: number;
+  monthlyRegistrationsChart: { label: string; count: number }[];
+  planBreakdown: { planName: string; count: number }[];
+}
+
+export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> {
+  const [shops, payments, plans] = await Promise.all([
+    getAllShopsAdmin(),
+    getAllPlatformPayments(),
+    getSubscriptionPlans(),
+  ]);
+
+  const now = new Date();
+  const thisMonthPrefix = now.toISOString().slice(0, 7);
+  const planMap = new Map(plans.map((p) => [p.id, p]));
+
+  let activeShops = 0;
+  let inactiveShops = 0;
+  let suspendedShops = 0;
+  let freeShops = 0;
+  let paidShops = 0;
+  let trialShops = 0;
+  let expiredSubscriptions = 0;
+  let monthlyRecurringRevenue = 0;
+  let shopsRegisteredThisMonth = 0;
+  let totalProductsAcrossShops = 0;
+  let totalOrdersAcrossShops = 0;
+  const uniqueOwners = new Set<string>();
+  const planCounts = new Map<string, number>();
+
+  for (const s of shops) {
+    if (s.ownerId) uniqueOwners.add(s.ownerId);
+    if (s.status === 'active') activeShops++;
+    else if (s.status === 'suspended') suspendedShops++;
+    else inactiveShops++;
+
+    const sub = s.subscription;
+    const plan = planMap.get(sub?.planId || '');
+    const isExpired = sub?.status === 'expired' || (sub?.expiryDate && new Date(sub.expiryDate) < now && sub.status !== 'cancelled');
+
+    if (isExpired) expiredSubscriptions++;
+    if (sub?.status === 'trial') trialShops++;
+
+    if (!plan || plan.monthlyPrice === 0 || sub?.isFreeOverride) {
+      freeShops++;
+    } else {
+      paidShops++;
+      if (!isExpired && s.status === 'active') {
+        monthlyRecurringRevenue += sub.billingCycle === 'yearly' ? Math.round(plan.yearlyPrice / 12) : plan.monthlyPrice;
+      }
+    }
+
+    const pName = sub?.planName || 'Starter Free';
+    planCounts.set(pName, (planCounts.get(pName) || 0) + 1);
+
+    if (s.createdAt?.startsWith(thisMonthPrefix)) {
+      shopsRegisteredThisMonth++;
+    }
+
+    totalProductsAcrossShops += Number(s.usage?.productsCount || 0);
+    totalOrdersAcrossShops += Number(s.usage?.ordersCount || 0);
+  }
+
+  const approvedPayments = payments.filter((p) => p.status === 'approved');
+  const pendingPaymentsCount = payments.filter((p) => p.status === 'pending').length;
+  const totalSubscriptionRevenue = approvedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+  // Build last 6 months chart
+  const monthlyRegistrationsChart: { label: string; count: number }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleString('en-US', { month: 'short' });
+    const count = shops.filter((s) => s.createdAt?.startsWith(key)).length;
+    monthlyRegistrationsChart.push({ label, count });
+  }
+
+  const planBreakdown = Array.from(planCounts.entries()).map(([planName, count]) => ({
+    planName,
+    count,
+  }));
+
+  return {
+    totalShops: shops.length,
+    activeShops,
+    inactiveShops,
+    suspendedShops,
+    freeShops,
+    paidShops,
+    trialShops,
+    expiredSubscriptions,
+    pendingPaymentsCount,
+    totalSubscriptionRevenue,
+    monthlyRecurringRevenue,
+    shopsRegisteredThisMonth,
+    totalProductsAcrossShops,
+    totalOrdersAcrossShops,
+    totalRegisteredOwners: uniqueOwners.size,
+    monthlyRegistrationsChart,
+    planBreakdown,
+  };
+}

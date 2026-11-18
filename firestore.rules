@@ -1,0 +1,476 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Default Deny All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdminEmail() {
+      return isSignedIn() &&
+        request.auth.token.email == 'hasanaamir815@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        isSuperAdminEmail() ||
+        exists(/databases/$(database)/documents/platform_admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.@]+$');
+    }
+
+    function isValidSlug(slug) {
+      return slug is string && slug.size() >= 2 && slug.size() <= 60 && slug.matches('^[a-z0-9\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isShopOwner(shopId) {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/shops/$(shopId)) &&
+         get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid) ||
+        (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.role == 'shop_owner' &&
+         get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.status != 'inactive')
+      );
+    }
+
+    function isShopAdmin(shopId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        isShopOwner(shopId) ||
+        (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.status != 'inactive' &&
+         get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.role in ['shop_owner', 'shop_admin'])
+      );
+    }
+
+    function isShopMember(shopId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        isShopOwner(shopId) ||
+        (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.status != 'inactive')
+      );
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['productId', 'userId', 'userName', 'rating', 'comment', 'createdAt']) &&
+        data.productId is string && data.productId.size() <= 128 &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100 &&
+        data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+        data.comment is string && data.comment.size() >= 1 && data.comment.size() <= 1000 &&
+        data.createdAt is string && data.createdAt.size() <= 50;
+    }
+
+    function isValidOrderCreate(data) {
+      return data.keys().hasAll(['id', 'orderNumber', 'userId', 'customer', 'items', 'total', 'paymentMethod', 'paymentStatus', 'orderStatus', 'createdAt']) &&
+        data.orderNumber is string && data.orderNumber.size() <= 30 &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.customer is map &&
+        data.items is list && data.items.size() > 0 && data.items.size() <= 100 &&
+        data.total is number && data.total >= 0 &&
+        data.paymentMethod in ['cod', 'bank_transfer', 'easypaisa', 'jazzcash', 'online'] &&
+        data.paymentStatus in ['pending', 'paid', 'failed'] &&
+        data.orderStatus in ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Returned', 'Refunded'] &&
+        (!('fulfillmentMethod' in data) || data.fulfillmentMethod in ['delivery', 'self_pickup']) &&
+        (!('pickupDetails' in data) || data.pickupDetails is map) &&
+        (!('paymentProofImage' in data) || (data.paymentProofImage is string && data.paymentProofImage.size() <= 300000));
+    }
+
+    function isValidOrderTracking(data) {
+      return data.keys().hasAll(['orderNumber', 'orderId', 'orderStatus', 'paymentMethod', 'paymentStatus', 'customerName', 'city', 'items', 'total', 'createdAt']) &&
+        data.keys().hasOnly(['orderNumber', 'orderId', 'orderStatus', 'fulfillmentMethod', 'pickupDetails', 'paymentMethod', 'paymentStatus', 'courierName', 'trackingNumber', 'customerName', 'city', 'items', 'total', 'createdAt', 'updatedAt']) &&
+        data.orderNumber is string && data.orderNumber.size() <= 30 &&
+        data.orderId is string && data.orderId.size() <= 128 &&
+        data.customerName is string && data.customerName.size() <= 120 &&
+        data.city is string && data.city.size() <= 80 &&
+        data.items is list && data.items.size() > 0 && data.items.size() <= 100 &&
+        data.total is number && data.total >= 0 &&
+        (!('fulfillmentMethod' in data) || data.fulfillmentMethod in ['delivery', 'self_pickup']) &&
+        (!('pickupDetails' in data) || data.pickupDetails is map);
+    }
+
+    function isValidContactMessage(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'message', 'status', 'createdAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 2000 &&
+        data.status == 'new';
+    }
+
+    // ====================================================
+    // PLATFORM SUPER ADMIN COLLECTIONS
+    // ====================================================
+
+    match /platform_admins/{adminId} {
+      allow get: if isValidId(adminId) && (isSuperAdmin() || (isSignedIn() && request.auth.uid == adminId));
+      allow list: if isSuperAdmin();
+      allow create, update, delete: if isValidId(adminId) && (
+        isSuperAdmin() ||
+        (isSuperAdminEmail() && adminId == request.auth.uid)
+      );
+    }
+
+    match /platform_settings/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(docId) && isSuperAdmin();
+    }
+
+    match /platform_plans/{planId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(planId) && isSuperAdmin();
+    }
+
+    match /platform_payments/{paymentId} {
+      allow get: if isValidId(paymentId) && (
+        isSuperAdmin() ||
+        (isSignedIn() && resource.data.ownerId == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if isValidId(paymentId) && isSignedIn() && (
+        isSuperAdmin() || (
+          incoming().ownerId == request.auth.uid &&
+          incoming().status == 'pending' &&
+          incoming().amount is number && incoming().amount >= 0 &&
+          isShopMember(incoming().shopId)
+        )
+      );
+      allow update, delete: if isValidId(paymentId) && isSuperAdmin();
+    }
+
+    match /platform_activity_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isValidId(logId) && isSignedIn();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ====================================================
+    // SLUG INDEX & STAFF INVITES
+    // ====================================================
+
+    match /shop_slugs/{slug} {
+      allow get: if isValidSlug(slug);
+      allow list: if isSuperAdmin();
+      allow create: if isValidSlug(slug) && isSignedIn() && (
+        isSuperAdmin() || (
+          incoming().ownerId == request.auth.uid &&
+          incoming().slug == slug &&
+          isValidId(incoming().shopId)
+        )
+      );
+      allow update: if isValidSlug(slug) && isSuperAdmin();
+      allow delete: if isValidSlug(slug) && isSuperAdmin();
+    }
+
+    match /shop_invites/{inviteId} {
+      allow get: if isValidId(inviteId) && (
+        isSuperAdmin() ||
+        (isSignedIn() && (resource.data.email == request.auth.token.email || isShopAdmin(resource.data.shopId)))
+      );
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && (
+          resource.data.email == request.auth.token.email ||
+          isShopAdmin(resource.data.shopId)
+        )
+      );
+      allow create: if isValidId(inviteId) && isSignedIn() && (
+        isSuperAdmin() || isShopAdmin(incoming().shopId)
+      );
+      allow update: if isValidId(inviteId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isShopAdmin(existing().shopId) ||
+        (existing().email == request.auth.token.email &&
+          incoming().status == 'accepted' &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy']))
+      );
+      allow delete: if isValidId(inviteId) && isSignedIn() && (
+        isSuperAdmin() || isShopAdmin(existing().shopId)
+      );
+    }
+
+    // ====================================================
+    // USERS & TENANT MEMBERSHIPS
+    // ====================================================
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && ((isSignedIn() && request.auth.uid == userId) || isSuperAdmin());
+      allow list: if isSuperAdmin();
+      allow create: if isValidId(userId) && (
+        (isSignedIn() && request.auth.uid == userId &&
+          (!('role' in incoming()) || incoming().role in ['customer', 'shop_owner'] || isSuperAdminEmail()) &&
+          (!('isBlocked' in incoming()) || incoming().isBlocked == false)) ||
+        isSuperAdmin()
+      );
+      allow update: if isValidId(userId) && (
+        (isSignedIn() && request.auth.uid == userId &&
+          !incoming().diff(existing()).affectedKeys().hasAny(['role', 'isBlocked'])) ||
+        isSuperAdmin()
+      );
+      allow delete: if isValidId(userId) && isSuperAdmin();
+
+      match /shopMemberships/{shopId} {
+        allow read: if isValidId(userId) && isValidId(shopId) && (
+          (isSignedIn() && request.auth.uid == userId) || isSuperAdmin()
+        );
+        allow create, update: if isValidId(userId) && isValidId(shopId) && isSignedIn() && (
+          isSuperAdmin() ||
+          isShopAdmin(shopId) ||
+          (request.auth.uid == userId && incoming().role == 'shop_owner' &&
+            exists(/databases/$(database)/documents/shops/$(shopId)) &&
+            get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid) ||
+          (request.auth.uid == userId &&
+            exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(userId)))
+        );
+        allow delete: if isValidId(userId) && isValidId(shopId) && (
+          isSuperAdmin() || isShopAdmin(shopId)
+        );
+      }
+    }
+
+    // ====================================================
+    // TENANT SHOPS & SCOPED SUBCOLLECTIONS
+    // ====================================================
+
+    match /shops/{shopId} {
+      allow get: if isValidId(shopId);
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && resource.data.ownerId == request.auth.uid
+      ) || resource.data.status == 'active';
+
+      allow create: if isValidId(shopId) && isSignedIn() && isValidSlug(incoming().slug) && (
+        isSuperAdmin() || (
+          incoming().ownerId == request.auth.uid &&
+          incoming().status == 'active' &&
+          incoming().subscription is map &&
+          (incoming().subscription.planId == 'free-starter' || incoming().subscription.status == 'trial')
+        )
+      );
+
+      allow update: if isValidId(shopId) && (
+        isSuperAdmin() || (
+          isShopMember(shopId) &&
+          !incoming().diff(existing()).affectedKeys().hasAny(['ownerId', 'slug', 'status', 'subscription'])
+        )
+      );
+
+      allow delete: if isValidId(shopId) && isSuperAdmin();
+
+      // Shop Staff RBAC
+      match /staff/{staffUid} {
+        allow get: if isValidId(staffUid) && (
+          isShopMember(shopId) ||
+          (isSignedIn() && request.auth.uid == staffUid)
+        );
+        allow list: if isShopMember(shopId);
+        allow create: if isValidId(staffUid) && isSignedIn() && (
+          isSuperAdmin() ||
+          isShopAdmin(shopId) ||
+          (request.auth.uid == staffUid && incoming().role == 'shop_owner' &&
+            get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid) ||
+          (request.auth.uid == staffUid && incoming().inviteId is string &&
+            exists(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)) &&
+            get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.email == request.auth.token.email &&
+            get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.shopId == shopId)
+        );
+        allow update, delete: if isValidId(staffUid) && (isSuperAdmin() || isShopAdmin(shopId));
+      }
+
+      // Shop Products
+      match /products/{productId} {
+        allow get: if isValidId(productId) && ((resource.data.isPublished == true) || isShopMember(shopId));
+        allow list: if (resource.data.isPublished == true) || isShopMember(shopId);
+        allow create, update, delete: if isValidId(productId) && isShopMember(shopId);
+      }
+
+      // Shop Categories
+      match /categories/{categoryId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(categoryId) && isShopMember(shopId);
+      }
+
+      // Shop Banners
+      match /banners/{bannerId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(bannerId) && isShopMember(shopId);
+      }
+
+      // Shop Settings
+      match /settings/{settingId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(settingId) && (
+          isShopMember(shopId) ||
+          (isSignedIn() && exists(/databases/$(database)/documents/shops/$(shopId)) &&
+           get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid)
+        );
+      }
+
+      // Shop Pages (About, FAQ, Return Policy, Terms, Privacy)
+      match /pages/{pageKey} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(pageKey) && isShopMember(shopId);
+      }
+
+      // Shop Coupons
+      match /coupons/{couponId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(couponId) && isShopMember(shopId);
+      }
+
+      // Shop Carts
+      match /carts/{cartId} {
+        allow read, write: if isValidId(cartId) && ((isSignedIn() && request.auth.uid == cartId) || isShopMember(shopId));
+      }
+
+      // Shop Wishlists
+      match /wishlists/{wishlistId} {
+        allow read, write: if isValidId(wishlistId) && ((isSignedIn() && request.auth.uid == wishlistId) || isShopMember(shopId));
+      }
+
+      // Shop Reviews
+      match /reviews/{reviewId} {
+        allow read: if true;
+        allow create: if isValidId(reviewId) && isValidReview(incoming()) && (
+          (isSignedIn() && incoming().userId == request.auth.uid) ||
+          (!isSignedIn() && incoming().userId == 'guest_buyer')
+        );
+        allow update, delete: if isValidId(reviewId) && ((isSignedIn() && existing().userId == request.auth.uid) || isShopMember(shopId));
+      }
+
+      // Shop Orders
+      match /orders/{orderId} {
+        allow get: if isValidId(orderId) && (
+          isShopMember(shopId) ||
+          (isSignedIn() && resource.data.userId == request.auth.uid) ||
+          resource.data.userId == 'guest'
+        );
+        allow list: if isShopMember(shopId) ||
+          (isSignedIn() && resource.data.userId == request.auth.uid) ||
+          resource.data.userId == 'guest';
+
+        allow create: if isValidId(orderId) && isValidOrderCreate(incoming()) && (
+          (incoming().userId == 'guest' && incoming().paymentStatus == 'pending' && incoming().orderStatus == 'Pending') ||
+          (isSignedIn() && incoming().userId == request.auth.uid && incoming().paymentStatus == 'pending' && incoming().orderStatus == 'Pending') ||
+          isShopMember(shopId)
+        );
+
+        allow update: if isValidId(orderId) && (
+          isShopMember(shopId) || (
+            isSignedIn() &&
+            resource.data.userId == request.auth.uid &&
+            existing().orderStatus == 'Pending' &&
+            incoming().orderStatus == 'Cancelled' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'updatedAt'])
+          )
+        );
+        allow delete: if isValidId(orderId) && isShopMember(shopId);
+      }
+
+      // Shop Non-PII Order Tracking
+      match /order_tracking/{orderNumber} {
+        allow get: if isValidId(orderNumber);
+        allow list: if isShopMember(shopId);
+        allow create: if isValidId(orderNumber) && isValidOrderTracking(incoming()) &&
+          incoming().orderStatus == 'Pending' && incoming().paymentStatus == 'pending';
+        allow update: if isValidId(orderNumber) && (
+          isShopMember(shopId) || (
+            isSignedIn() &&
+            existing().orderStatus == 'Pending' &&
+            incoming().orderStatus == 'Cancelled' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'updatedAt']) &&
+            exists(/databases/$(database)/documents/shops/$(shopId)/orders/$(existing().orderId)) &&
+            get(/databases/$(database)/documents/shops/$(shopId)/orders/$(existing().orderId)).data.userId == request.auth.uid
+          )
+        );
+        allow delete: if isValidId(orderNumber) && isShopMember(shopId);
+      }
+
+      // Shop Inventory Logs
+      match /inventory_logs/{logId} {
+        allow read, write: if isShopMember(shopId);
+      }
+
+      // Shop Contact Messages
+      match /contact_messages/{messageId} {
+        allow create: if isValidId(messageId) && isValidContactMessage(incoming());
+        allow read, update, delete: if isShopMember(shopId);
+      }
+
+      // Shop Customers Directory
+      match /customers/{customerId} {
+        allow read, write: if isValidId(customerId) && isShopMember(shopId);
+      }
+
+      // Shop Notifications & Activity Logs
+      match /notifications/{notifId} {
+        allow create: if isValidId(notifId);
+        allow read, update, delete: if isValidId(notifId) && isShopMember(shopId);
+      }
+
+      match /activity_logs/{logId} {
+        allow read, write: if isValidId(logId) && isShopMember(shopId);
+      }
+    }
+
+    // ====================================================
+    // LEGACY COLLECTIONS (Preserved Read-Only for Super Admin Migration & Graceful Fallback)
+    // ====================================================
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isSuperAdmin() || (isSignedIn() && request.auth.uid == adminId));
+      allow list: if isSuperAdmin();
+      allow create, update, delete: if isValidId(adminId) && isSuperAdminEmail();
+    }
+    match /products/{productId} {
+      allow read: if isSuperAdmin() || resource.data.isPublished == true;
+      allow write: if isSuperAdmin();
+    }
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+    match /orders/{orderId} {
+      allow read, write: if isSuperAdmin();
+    }
+    match /order_tracking/{orderNumber} {
+      allow read, write: if isSuperAdmin();
+    }
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+    match /inventory_logs/{logId} {
+      allow read, write: if isSuperAdmin();
+    }
+    match /contact_messages/{messageId} {
+      allow read, write: if isSuperAdmin();
+    }
+  }
+}

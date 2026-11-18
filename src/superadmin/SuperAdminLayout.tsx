@@ -1,0 +1,188 @@
+import React, { useState } from 'react';
+import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  Store,
+  CreditCard,
+  Receipt,
+  BarChart3,
+  LogOut,
+  Menu,
+  X,
+  ShieldAlert,
+  ExternalLink,
+  Loader2,
+} from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+
+export const SuperAdminLayout: React.FC = () => {
+  const { currentUser, isSuperAdmin, loading, logout } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const navigate = useNavigate();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-7 h-7 animate-spin text-[#065F46]" />
+      </div>
+    );
+  }
+
+  if (!currentUser || !isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-[#FAF9F6] flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4">
+          <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-extrabold text-slate-900">Super Admin Access Required</h1>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            This portal is restricted to verified platform administrators. Sign in with an
+            authorized Super Admin identity to continue.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+            <Link
+              to="/login"
+              className="flex-1 py-2.5 bg-[#065F46] text-white rounded-xl text-xs font-bold hover:bg-emerald-900 transition"
+            >
+              Sign In
+            </Link>
+            <Link
+              to="/"
+              className="flex-1 py-2.5 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition"
+            >
+              Platform Home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const navItems = [
+    { to: '/super-admin', label: 'Overview', icon: LayoutDashboard, end: true },
+    { to: '/super-admin/shops', label: 'Shops & Migration', icon: Store },
+    { to: '/super-admin/plans', label: 'Subscription Plans', icon: CreditCard },
+    { to: '/super-admin/payments', label: 'Payment Approvals', icon: Receipt },
+    { to: '/super-admin/analytics', label: 'Platform Analytics', icon: BarChart3 },
+  ];
+
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/login');
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex">
+      {/* Mobile Sidebar Backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-slate-950 text-slate-200 flex flex-col transform transition-transform duration-200 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
+        <div className="h-16 px-5 border-b border-slate-800 flex items-center justify-between">
+          <Link to="/super-admin" className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#065F46] text-white flex items-center justify-center font-extrabold text-sm">
+              S
+            </div>
+            <div>
+              <p className="text-sm font-extrabold text-white leading-none">BazaarPK Cloud</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">
+                Super Admin
+              </p>
+            </div>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden text-slate-400 hover:text-white"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={() => setSidebarOpen(false)}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  isActive
+                    ? 'bg-[#065F46] text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`
+              }
+            >
+              <item.icon className="w-4 h-4 shrink-0" />
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="p-4 border-t border-slate-800 space-y-2">
+          <div className="px-2 py-1">
+            <p className="text-[11px] font-semibold text-white truncate">{currentUser.email}</p>
+            <p className="text-[10px] text-slate-400">Platform Owner</p>
+          </div>
+          <Link
+            to="/"
+            className="flex items-center justify-between px-3 py-2 rounded-lg text-xs text-slate-300 hover:bg-slate-900 transition"
+          >
+            <span>SaaS Homepage</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </Link>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-red-400 hover:bg-red-950/50 transition"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 rounded-lg border border-slate-200 text-slate-700"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+            <h1 className="text-sm sm:text-base font-bold text-slate-900">
+              Platform Control Tower
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Link
+              to="/dashboard"
+              className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            >
+              Shop Workspace
+            </Link>
+          </div>
+        </header>
+
+        <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+};

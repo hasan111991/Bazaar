@@ -1,0 +1,45 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny all
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidImageUpload() {
+      return request.resource != null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
+    }
+
+    // Tenant asset storage:
+    // shops/{shopId}/logo/{fileName}
+    // shops/{shopId}/products/{productId}/{fileName}
+    // shops/{shopId}/banners/{fileName}
+    // shops/{shopId}/categories/{fileName}
+    // shops/{shopId}/pages/{fileName}
+    // shops/{shopId}/payments/{fileName}  (customer checkout proof or shop subscription receipt)
+    match /shops/{shopId}/{folder}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isValidImageUpload() && (
+        // Checkout payment proofs can be uploaded by customers/guests placing orders
+        folder == 'payments' ||
+        // Product/Banner/Category/Logo uploads require authentication
+        (isSignedIn() && folder in ['logo', 'products', 'banners', 'categories', 'pages', 'subscription'])
+      );
+      allow delete: if isSignedIn();
+    }
+
+    // Platform subscription payment proofs
+    match /platform/payments/{shopId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isValidImageUpload();
+      allow delete: if isSignedIn();
+    }
+  }
+}

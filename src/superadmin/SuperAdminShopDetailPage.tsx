@@ -1,0 +1,484 @@
+import React, { useEffect, useState } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  ExternalLink,
+  Eye,
+  Loader2,
+  CheckCircle2,
+  PauseCircle,
+  Trash2,
+} from 'lucide-react';
+import {
+  getShopById,
+  getSubscriptionPlans,
+  getPaymentsByShop,
+  updateShopStatus,
+  assignShopSubscription,
+  extendShopSubscription,
+  deleteShopComplete,
+} from '../services/platformService';
+import {
+  getShopProductsAdmin,
+  getAllShopOrdersAdmin,
+  getShopCustomers,
+  getShopSettings,
+  getShopStaff,
+  getShopActivityLogs,
+} from '../services/tenantService';
+import {
+  Shop,
+  Product,
+  Order,
+  ShopCustomerSummary,
+  StoreSettings,
+  StaffMember,
+  ShopInvite,
+  ActivityLog,
+  SubscriptionPlan,
+  PlatformPayment,
+} from '../types';
+import { formatPKR } from '../data/seedData';
+
+const TABS = [
+  'Overview',
+  'Subscription',
+  'Products',
+  'Orders',
+  'Customers',
+  'Payment Settings',
+  'Staff / Members',
+  'Storage Usage',
+  'Activity Logs',
+  'Actions',
+] as const;
+
+export const SuperAdminShopDetailPage: React.FC = () => {
+  const { shopId = '' } = useParams();
+  const navigate = useNavigate();
+
+  const [tab, setTab] = useState<(typeof TABS)[number]>('Overview');
+  const [loading, setLoading] = useState(true);
+  const [shop, setShop] = useState<Shop | null>(null);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [customers, setCustomers] = useState<ShopCustomerSummary[]>([]);
+  const [settings, setSettings] = useState<StoreSettings | null>(null);
+  const [staffData, setStaffData] = useState<{ staff: StaffMember[]; invites: ShopInvite[] }>({
+    staff: [],
+    invites: [],
+  });
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [payments, setPayments] = useState<PlatformPayment[]>([]);
+
+  const [selectedPlanId, setSelectedPlanId] = useState('growth-plus');
+  const [freeComp, setFreeComp] = useState(false);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      const [s, pList, prods, ords, custs, stgs, stf, lg, pays] = await Promise.all([
+        getShopById(shopId),
+        getSubscriptionPlans(),
+        getShopProductsAdmin(shopId).catch(() => []),
+        getAllShopOrdersAdmin(shopId).catch(() => []),
+        getShopCustomers(shopId).catch(() => []),
+        getShopSettings(shopId),
+        getShopStaff(shopId).catch(() => ({ staff: [], invites: [] })),
+        getShopActivityLogs(shopId),
+        getPaymentsByShop(shopId),
+      ]);
+      setShop(s);
+      setPlans(pList);
+      setProducts(prods);
+      setOrders(ords);
+      setCustomers(custs);
+      setSettings(stgs);
+      setStaffData(stf);
+      setLogs(lg);
+      setPayments(pays);
+      if (s?.subscription?.planId) setSelectedPlanId(s.subscription.planId);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (shopId) loadAll();
+  }, [shopId]);
+
+  if (loading) {
+    return (
+      <div className="py-20 flex items-center justify-center text-xs text-slate-500 gap-2">
+        <Loader2 className="w-5 h-5 animate-spin text-[#065F46]" /> Loading shop dossier...
+      </div>
+    );
+  }
+
+  if (!shop) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
+        <p className="text-sm font-bold text-slate-900">Shop not found ({shopId})</p>
+        <Link to="/super-admin/shops" className="text-xs font-bold text-[#065F46] hover:underline">
+          Back to Shops Directory
+        </Link>
+      </div>
+    );
+  }
+
+  const currentPlan = plans.find((p) => p.id === shop.subscription?.planId);
+  const maxMB = currentPlan?.maxStorageMB || 50;
+  const usedMB = Number(((shop.usage?.storageBytes || 0) / (1024 * 1024)).toFixed(2));
+  const storagePct = Math.min(100, Math.round((usedMB / maxMB) * 100));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Link to="/super-admin/shops" className="p-2 border border-slate-200 bg-white rounded-xl hover:bg-slate-50">
+            <ArrowLeft className="w-4 h-4 text-slate-700" />
+          </Link>
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-900">{shop.name}</h2>
+            <p className="text-xs text-slate-500 font-mono">
+              /s/{shop.slug} · Owner: {shop.ownerEmail} · Status: {shop.status.toUpperCase()}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to={`/dashboard?inspectShopId=${shop.id}`}
+            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Eye className="w-3.5 h-3.5" /> Inspect Shop Dashboard (Read-Only)
+          </Link>
+          <Link
+            to={`/s/${shop.slug}`}
+            target="_blank"
+            className="px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-semibold flex items-center gap-1.5"
+          >
+            <ExternalLink className="w-3.5 h-3.5" /> Open Storefront
+          </Link>
+        </div>
+      </div>
+
+      {/* 10-Tab Bar */}
+      <div className="flex overflow-x-auto gap-1.5 pb-1 border-b border-slate-200">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`px-3.5 py-2 rounded-t-lg text-xs font-semibold whitespace-nowrap transition ${
+              tab === t
+                ? 'bg-white border border-b-0 border-slate-200 text-[#065F46]'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 text-xs">
+        {tab === 'Overview' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-slate-900">Store Profile</h3>
+              <div className="space-y-2 text-slate-700">
+                <p><strong>Shop ID:</strong> <span className="font-mono">{shop.id}</span></p>
+                <p><strong>Storefront URL:</strong> <span className="font-mono">/s/{shop.slug}</span></p>
+                <p><strong>Owner Name:</strong> {shop.ownerName}</p>
+                <p><strong>Owner Email:</strong> {shop.ownerEmail}</p>
+                <p><strong>Phone:</strong> {shop.ownerPhone}</p>
+                <p><strong>City / Address:</strong> {shop.city} — {shop.address}</p>
+                <p><strong>Registered:</strong> {new Date(shop.createdAt).toLocaleString()}</p>
+                <p><strong>Last Activity:</strong> {shop.lastActivityAt ? new Date(shop.lastActivityAt).toLocaleString() : 'N/A'}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 self-start">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-slate-500">Live Products</p>
+                <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{products.length}</p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-slate-500">Total Orders</p>
+                <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{orders.length}</p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-slate-500">Unique Customers</p>
+                <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{customers.length}</p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-slate-500">Gross Revenue</p>
+                <p className="text-lg font-extrabold text-[#065F46] mt-1 tabular-nums">
+                  {formatPKR(orders.filter((o) => o.orderStatus !== 'Cancelled').reduce((s, o) => s + Number(o.total || 0), 0))}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === 'Subscription' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="text-slate-500">Current Plan</p>
+                <p className="text-base font-extrabold text-slate-900 mt-1">{shop.subscription?.planName}</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="text-slate-500">Subscription Status</p>
+                <p className="text-base font-extrabold uppercase text-[#065F46] mt-1">{shop.subscription?.status}</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="text-slate-500">Billing Cycle</p>
+                <p className="text-base font-extrabold uppercase text-slate-900 mt-1">{shop.subscription?.billingCycle}</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="text-slate-500">Expiry Date</p>
+                <p className="text-base font-extrabold text-slate-900 mt-1">
+                  {shop.subscription?.expiryDate ? new Date(shop.subscription.expiryDate).toLocaleDateString() : 'N/A'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 border border-slate-200 rounded-xl space-y-3">
+              <h4 className="font-bold text-slate-900">Change / Assign Subscription Plan</h4>
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedPlanId}
+                  onChange={(e) => setSelectedPlanId(e.target.value)}
+                  className="px-3 py-2 border border-slate-200 rounded-lg bg-white"
+                >
+                  {plans.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} (Rs. {p.monthlyPrice}/mo)</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-1.5 font-semibold">
+                  <input type="checkbox" checked={freeComp} onChange={(e) => setFreeComp(e.target.checked)} />
+                  Free Comp Override
+                </label>
+                <button
+                  type="button"
+                  onClick={() => assignShopSubscription(shop.id, { planId: selectedPlanId, billingCycle: 'monthly', isFreeOverride: freeComp }).then(loadAll)}
+                  className="px-4 py-2 bg-[#065F46] text-white rounded-lg font-bold"
+                >
+                  Apply Plan (30d)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => extendShopSubscription(shop.id, 30).then(loadAll)}
+                  className="px-4 py-2 border border-slate-300 rounded-lg font-semibold hover:bg-slate-50"
+                >
+                  Extend +30 Days
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-bold text-slate-900 mb-2">Subscription Payment History ({payments.length})</h4>
+              {payments.length === 0 ? (
+                <p className="text-slate-500">No subscription payment proofs submitted by this store.</p>
+              ) : (
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl">
+                  {payments.map((p) => (
+                    <div key={p.id} className="p-3 flex items-center justify-between">
+                      <div>
+                        <p className="font-bold">{p.planName} ({p.billingCycle}) — {formatPKR(p.amount)}</p>
+                        <p className="text-[11px] text-slate-500">TID: {p.transactionId} · {p.method.toUpperCase()}</p>
+                      </div>
+                      <span className="font-bold uppercase">{p.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'Products' && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-slate-900">Catalog Products ({products.length})</h3>
+            {products.length === 0 ? (
+              <p className="text-slate-500">No products created yet.</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {products.map((p) => (
+                  <div key={p.id} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-slate-900">{p.title}</p>
+                      <p className="text-[11px] text-slate-500">{p.category} · SKU: {p.sku} · Stock: {p.stock}</p>
+                    </div>
+                    <p className="font-bold tabular-nums">{formatPKR(p.salePrice ?? p.regularPrice)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'Orders' && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-slate-900">Recent Orders ({orders.length})</h3>
+            {orders.length === 0 ? (
+              <p className="text-slate-500">No orders placed yet.</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {orders.map((o) => (
+                  <div key={o.id} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-slate-900">{o.orderNumber} — {o.customer.name}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {o.customer.city} · {o.paymentMethod.toUpperCase()} ({o.paymentStatus}) · {o.orderStatus}
+                      </p>
+                    </div>
+                    <p className="font-bold tabular-nums">{formatPKR(o.total)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'Customers' && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-slate-900">Store Customers ({customers.length})</h3>
+            {customers.length === 0 ? (
+              <p className="text-slate-500">No customer records yet.</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {customers.map((c) => (
+                  <div key={c.id} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-slate-900">{c.name}</p>
+                      <p className="text-[11px] text-slate-500">{c.phone} · {c.city}</p>
+                    </div>
+                    <p className="font-bold tabular-nums">{c.ordersCount} orders · {formatPKR(c.totalSpent)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'Payment Settings' && settings && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-4 border border-slate-200 rounded-xl space-y-1">
+              <h4 className="font-bold text-slate-900">EasyPaisa &amp; JazzCash</h4>
+              <p>EasyPaisa ({settings.easypaisaDetails.enabled ? 'Enabled' : 'Disabled'}): {settings.easypaisaDetails.accountNumber} ({settings.easypaisaDetails.accountTitle})</p>
+              <p>JazzCash ({settings.jazzcashDetails.enabled ? 'Enabled' : 'Disabled'}): {settings.jazzcashDetails.accountNumber} ({settings.jazzcashDetails.accountTitle})</p>
+            </div>
+            <div className="p-4 border border-slate-200 rounded-xl space-y-1">
+              <h4 className="font-bold text-slate-900">Bank Transfer &amp; Self-Pickup</h4>
+              <p>Bank: {settings.bankDetails.bankName} — {settings.bankDetails.accountNumber}</p>
+              <p>IBAN: {settings.bankDetails.iban}</p>
+              <p>Self-Pickup ({settings.selfPickupDetails.enabled ? 'Enabled' : 'Disabled'}): {settings.selfPickupDetails.address}</p>
+            </div>
+          </div>
+        )}
+
+        {tab === 'Staff / Members' && (
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-900">Active Team Members ({staffData.staff.length})</h3>
+            <div className="divide-y divide-slate-100">
+              {staffData.staff.map((st) => (
+                <div key={st.uid} className="py-2.5 flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-slate-900">{st.name}</p>
+                    <p className="text-[11px] text-slate-500">{st.email}</p>
+                  </div>
+                  <span className="font-bold uppercase text-[#065F46]">{st.role}</span>
+                </div>
+              ))}
+            </div>
+            {staffData.invites.length > 0 && (
+              <div className="pt-2">
+                <h4 className="font-bold text-slate-700 mb-1">Pending Invites ({staffData.invites.length})</h4>
+                {staffData.invites.map((inv) => (
+                  <p key={inv.id} className="text-slate-600">{inv.email} — {inv.role}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'Storage Usage' && (
+          <div className="space-y-3 max-w-md">
+            <h3 className="text-sm font-bold text-slate-900">Cloud Storage Quota</h3>
+            <p className="text-slate-600 tabular-nums">
+              Used <strong>{usedMB} MB</strong> of <strong>{maxMB} MB</strong> ({storagePct}%)
+            </p>
+            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-[#065F46]" style={{ width: `${storagePct}%` }} />
+            </div>
+          </div>
+        )}
+
+        {tab === 'Activity Logs' && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-bold text-slate-900">Recent Shop Audit Logs ({logs.length})</h3>
+            {logs.length === 0 ? (
+              <p className="text-slate-500">No logged admin actions yet.</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {logs.map((l) => (
+                  <div key={l.id} className="py-2 flex items-center justify-between gap-4">
+                    <div>
+                      <span className="font-bold text-slate-900">{l.action}</span> —{' '}
+                      <span className="text-slate-600">{l.details}</span>
+                      <p className="text-[11px] text-slate-400">{l.actorEmail}</p>
+                    </div>
+                    <span className="text-[11px] text-slate-400 whitespace-nowrap">
+                      {new Date(l.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'Actions' && (
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => updateShopStatus(shop.id, 'active').then(loadAll)}
+              className="px-4 py-2.5 bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5"
+            >
+              <CheckCircle2 className="w-4 h-4" /> Activate / Reactivate Shop
+            </button>
+            <button
+              type="button"
+              onClick={() => updateShopStatus(shop.id, 'suspended').then(loadAll)}
+              className="px-4 py-2.5 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-1.5"
+            >
+              <PauseCircle className="w-4 h-4" /> Suspend Shop
+            </button>
+            <button
+              type="button"
+              onClick={() => updateShopStatus(shop.id, 'inactive').then(loadAll)}
+              className="px-4 py-2.5 border border-slate-300 text-slate-800 rounded-xl font-bold"
+            >
+              Set Inactive
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm(`Permanently delete ${shop.name}? This cannot be undone.`)) {
+                  deleteShopComplete(shop.id).then(() => navigate('/super-admin/shops'));
+                }
+              }}
+              className="px-4 py-2.5 bg-red-600 text-white rounded-xl font-bold flex items-center gap-1.5 ml-auto"
+            >
+              <Trash2 className="w-4 h-4" /> Delete Shop
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

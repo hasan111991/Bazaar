@@ -1,0 +1,972 @@
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  writeBatch,
+  increment,
+} from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
+import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
+import {
+  Product,
+  Category,
+  Order,
+  Coupon,
+  Review,
+  StoreSettings,
+  Banner,
+  InventoryLog,
+  CartItem,
+  ContactMessage,
+  StaffMember,
+  ShopInvite,
+  StaffPermission,
+  NotificationItem,
+  ActivityLog,
+  ShopPageContent,
+  Shop,
+  ShopCustomerSummary,
+} from '../types';
+import {
+  INITIAL_SETTINGS,
+  FALLBACK_PRODUCT_IMAGE,
+  DEFAULT_SHOP_ID,
+  DEFAULT_SUBSCRIPTION_PLANS,
+} from '../data/seedData';
+import { stripUndefined } from './platformService';
+
+// ====================================================
+// PLAN LIMIT & SUBSCRIPTION ENFORCEMENT HELPERS
+// ====================================================
+
+export async function getShopAndPlanLimits(shopId: string) {
+  const shopSnap = await getDoc(doc(db, 'shops', shopId));
+  if (!shopSnap.exists()) {
+    return {
+      shop: null as Shop | null,
+      plan: DEFAULT_SUBSCRIPTION_PLANS[0],
+      isSuspended: false,
+      isExpired: false,
+    };
+  }
+  const shop = { ...(shopSnap.data() as Shop), id: shopSnap.id };
+  const plansSnap = await getDoc(doc(db, 'platform_plans', shop.subscription?.planId || 'free-starter'));
+  const plan = plansSnap.exists()
+    ? (plansSnap.data() as any)
+    : DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === shop.subscription?.planId) || DEFAULT_SUBSCRIPTION_PLANS[0];
+
+  const isSuspended = shop.status === 'suspended' || shop.status === 'inactive';
+  const isExpired =
+    shop.subscription?.status === 'expired' ||
+    (Boolean(shop.subscription?.expiryDate) && new Date(shop.subscription.expiryDate) < new Date());
+
+  return { shop, plan, isSuspended, isExpired };
+}
+
+export async function logShopActivity(
+  shopId: string,
+  action: string,
+  targetType: ActivityLog['targetType'],
+  targetId: string,
+  details: string
+): Promise<void> {
+  try {
+    const id = `slog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const payload: ActivityLog = {
+      id,
+      actorId: auth.currentUser?.uid || 'system',
+      actorEmail: auth.currentUser?.email || 'system',
+      action,
+      targetType,
+      targetId,
+      details,
+      createdAt: new Date().toISOString(),
+    };
+    await setDoc(doc(db, 'shops', shopId, 'activity_logs', id), payload);
+    await updateDoc(doc(db, 'shops', shopId), { lastActivityAt: payload.createdAt }).catch(() => {});
+  } catch (err) {
+    console.warn('Shop activity log warning:', err);
+  }
+}
+
+export async function getShopActivityLogs(shopId: string): Promise<ActivityLog[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'activity_logs'));
+    const list: ActivityLog[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as ActivityLog), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
+export async function getShopNotifications(shopId: string): Promise<NotificationItem[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'notifications'));
+    const list: NotificationItem[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as NotificationItem), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 40);
+  } catch {
+    return [];
+  }
+}
+
+export async function markNotificationRead(shopId: string, notifId: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'shops', shopId, 'notifications', notifId), { isRead: true });
+  } catch {}
+}
+
+// ====================================================
+// PRODUCTS (TENANT SCOPED + PLAN LIMIT GUARDED)
+// ====================================================
+
+export async function getShopProducts(
+  shopId: string = DEFAULT_SHOP_ID,
+  options?: { category?: string; featuredOnly?: boolean }
+): Promise<Product[]> {
+  const colPath = `shops/${shopId}/products`;
+  try {
+    const q = query(collection(db, 'shops', shopId, 'products'), where('isPublished', '==', true));
+    const snap = await getDocs(q);
+    const list: Product[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Product), id: d.id, shopId }));
+    let filtered = list;
+    if (options?.category) filtered = filtered.filter((p) => p.category === options.category);
+    if (options?.featuredOnly) filtered = filtered.filter((p) => p.isFeatured);
+    return filtered;
+  } catch (err) {
+    console.warn(`Error fetching products for ${colPath}:`, err);
+    return [];
+  }
+}
+
+export async function getShopProductsAdmin(shopId: string = DEFAULT_SHOP_ID): Promise<Product[]> {
+  const colPath = `shops/${shopId}/products`;
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'products'));
+    const list: Product[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Product), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, colPath);
+  }
+}
+
+export async function getShopProductById(shopId: string, id: string): Promise<Product | null> {
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId, 'products', id));
+    return snap.exists() ? { ...(snap.data() as Product), id: snap.id, shopId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveShopProduct(shopId: string, product: Partial<Product>): Promise<string> {
+  const isNew = !product.id;
+  if (isNew) {
+    const { shop, plan, isSuspended, isExpired } = await getShopAndPlanLimits(shopId);
+    if (isSuspended || isExpired) {
+      throw new Error('Your store subscription is inactive or expired. Renew your plan to add products.');
+    }
+    const existing = await getDocs(collection(db, 'shops', shopId, 'products'));
+    if (existing.size >= (plan?.maxProducts || 25)) {
+      throw new Error(
+        `Product limit reached (${existing.size}/${plan.maxProducts} on ${shop?.subscription?.planName || 'current plan'}). Upgrade your subscription to add more products.`
+      );
+    }
+  }
+
+  const id = product.id || `prod_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+  const now = new Date().toISOString();
+  const docData = stripUndefined<Product>({
+    id,
+    shopId,
+    title: product.title || 'Untitled Product',
+    slug: (product.title || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    description: product.description || '',
+    regularPrice: Number(product.regularPrice) || 0,
+    salePrice: product.salePrice && Number(product.salePrice) > 0 ? Number(product.salePrice) : undefined,
+    stock: Number(product.stock) || 0,
+    category: product.category || 'general',
+    brand: product.brand || 'Store Brand',
+    images: product.images && product.images.length > 0 ? product.images : [FALLBACK_PRODUCT_IMAGE],
+    sku: product.sku || `SKU-${Date.now().toString().slice(-6)}`,
+    variants: product.variants || [],
+    isFeatured: Boolean(product.isFeatured),
+    isPublished: product.isPublished !== false,
+    rating: product.rating || 4.8,
+    reviewCount: product.reviewCount || 0,
+    specifications: product.specifications || {},
+    createdAt: product.createdAt || now,
+    updatedAt: now,
+  });
+
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'products', id), docData);
+    if (isNew) {
+      await updateDoc(doc(db, 'shops', shopId), {
+        'usage.productsCount': increment(1),
+        lastActivityAt: now,
+      }).catch(() => {});
+    }
+    await logShopActivity(shopId, isNew ? 'Created Product' : 'Updated Product', 'product', id, docData.title);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/products/${id}`);
+  }
+}
+
+export async function deleteShopProduct(shopId: string, id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shops', shopId, 'products', id));
+    const snap = await getDoc(doc(db, 'shops', shopId));
+    if (snap.exists()) {
+      const currentCount = Number(snap.data()?.usage?.productsCount || 0);
+      await updateDoc(doc(db, 'shops', shopId), {
+        'usage.productsCount': Math.max(0, currentCount - 1),
+      }).catch(() => {});
+    }
+    await logShopActivity(shopId, 'Deleted Product', 'product', id, `Removed product ${id}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/products/${id}`);
+  }
+}
+
+// ====================================================
+// CATEGORIES
+// ====================================================
+
+export async function getShopCategories(shopId: string = DEFAULT_SHOP_ID): Promise<Category[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'categories'));
+    const list: Category[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Category), id: d.id, shopId }));
+    return list.sort((a, b) => (a.order || 0) - (b.order || 0));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveShopCategory(shopId: string, category: Partial<Category>): Promise<string> {
+  const id = category.id || `cat_${Date.now()}`;
+  const docData = stripUndefined<Category>({
+    id,
+    shopId,
+    name: category.name || 'New Category',
+    slug: category.slug || (category.name || 'cat').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    description: category.description || '',
+    imageUrl: category.imageUrl || FALLBACK_PRODUCT_IMAGE,
+    order: category.order || 1,
+  });
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'categories', id), docData);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/categories/${id}`);
+  }
+}
+
+export async function deleteShopCategory(shopId: string, id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shops', shopId, 'categories', id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/categories/${id}`);
+  }
+}
+
+// ====================================================
+// BANNERS
+// ====================================================
+
+export async function getShopBanners(shopId: string = DEFAULT_SHOP_ID, includeInactive = false): Promise<Banner[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'banners'));
+    const list: Banner[] = [];
+    snap.forEach((d) => {
+      const b = d.data() as Banner;
+      if (includeInactive || b.isActive !== false) {
+        list.push({ ...b, id: d.id, shopId });
+      }
+    });
+    return list.sort((a, b) => (a.order || 0) - (b.order || 0));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveShopBanner(shopId: string, banner: Partial<Banner>): Promise<string> {
+  const id = banner.id || `ban_${Date.now()}`;
+  const payload = stripUndefined<Banner>({
+    id,
+    shopId,
+    title: banner.title || 'Featured Collection',
+    subtitle: banner.subtitle || '',
+    link: banner.link || '/shop',
+    imageUrl: banner.imageUrl || FALLBACK_PRODUCT_IMAGE,
+    buttonText: banner.buttonText || 'Shop Now',
+    isActive: banner.isActive !== false,
+    order: Number(banner.order) || 1,
+  });
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'banners', id), payload);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/banners/${id}`);
+  }
+}
+
+export async function deleteShopBanner(shopId: string, id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shops', shopId, 'banners', id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/banners/${id}`);
+  }
+}
+
+// ====================================================
+// ORDERS & TRACKING
+// ====================================================
+
+export async function createShopOrder(
+  shopId: string,
+  orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt'>
+): Promise<Order> {
+  const signedInUid = auth.currentUser?.uid;
+  const effectiveUserId = signedInUid || 'guest';
+
+  if (effectiveUserId === 'guest') {
+    try {
+      const response = await fetch('/api/orders/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...orderData, shopId, userId: 'guest' }),
+      });
+      if (response.ok) {
+        const serverOrder = await response.json();
+        if (!serverOrder.requiresClientAuthWrite) {
+          return serverOrder as Order;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Guest API order fallback to client Firestore:', apiErr);
+    }
+  }
+
+  const orderNumber = `PK-${Math.floor(100000 + Math.random() * 900000)}`;
+  const id = `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  const now = new Date().toISOString();
+
+  const fullOrder = stripUndefined<Order>({
+    ...orderData,
+    id,
+    shopId,
+    orderNumber,
+    userId: effectiveUserId,
+    paymentStatus: 'pending',
+    orderStatus: 'Pending',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const trackingDoc = stripUndefined({
+    orderNumber,
+    orderId: id,
+    orderStatus: 'Pending',
+    fulfillmentMethod: fullOrder.fulfillmentMethod || 'delivery',
+    pickupDetails: fullOrder.pickupDetails,
+    paymentMethod: fullOrder.paymentMethod,
+    paymentStatus: 'pending',
+    customerName: fullOrder.customer.name,
+    city: fullOrder.customer.city,
+    items: fullOrder.items.map((it) => ({
+      productId: it.productId,
+      title: it.title,
+      price: it.price,
+      quantity: it.quantity,
+      image: it.image,
+    })),
+    total: fullOrder.total,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'shops', shopId, 'orders', id), fullOrder);
+    batch.set(doc(db, 'shops', shopId, 'order_tracking', orderNumber), trackingDoc);
+    // Notify merchant
+    const notifId = `ntf_${Date.now()}`;
+    batch.set(doc(db, 'shops', shopId, 'notifications', notifId), {
+      id: notifId,
+      title: `New Order ${orderNumber}`,
+      message: `${fullOrder.customer.name} placed a Rs. ${fullOrder.total.toLocaleString()} order via ${fullOrder.paymentMethod.toUpperCase()}`,
+      type: 'order',
+      isRead: false,
+      link: '/dashboard/orders',
+      createdAt: now,
+    });
+    await batch.commit();
+    return fullOrder;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/orders/${id}`);
+  }
+}
+
+export async function getShopOrdersByUser(shopId: string, userId: string): Promise<Order[]> {
+  try {
+    const q = query(collection(db, 'shops', shopId, 'orders'), where('userId', '==', userId));
+    const snap = await getDocs(q);
+    const list: Order[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Order), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `shops/${shopId}/orders`);
+  }
+}
+
+export async function getAllShopOrdersAdmin(shopId: string): Promise<Order[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'orders'));
+    const list: Order[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Order), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `shops/${shopId}/orders`);
+  }
+}
+
+export async function updateShopOrderStatus(
+  shopId: string,
+  orderId: string,
+  updates: Partial<Order>,
+  orderNumber?: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const cleanUpdates = stripUndefined({ ...updates, updatedAt: now });
+
+  try {
+    await updateDoc(doc(db, 'shops', shopId, 'orders', orderId), cleanUpdates);
+
+    let resolvedOrderNumber = orderNumber;
+    if (!resolvedOrderNumber) {
+      const ordSnap = await getDoc(doc(db, 'shops', shopId, 'orders', orderId));
+      if (ordSnap.exists()) {
+        resolvedOrderNumber = ordSnap.data().orderNumber;
+      }
+    }
+
+    if (resolvedOrderNumber) {
+      const trackUpdates = stripUndefined({
+        orderStatus: updates.orderStatus,
+        paymentStatus: updates.paymentStatus,
+        courierName: updates.courierName,
+        trackingNumber: updates.trackingNumber,
+        updatedAt: now,
+      });
+      if (Object.keys(trackUpdates).length > 1) {
+        await updateDoc(doc(db, 'shops', shopId, 'order_tracking', resolvedOrderNumber), trackUpdates).catch(() => {});
+      }
+    }
+    await logShopActivity(shopId, 'Updated Order', 'order', orderId, `Order ${resolvedOrderNumber || orderId} -> ${updates.orderStatus || updates.paymentStatus}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/orders/${orderId}`);
+  }
+}
+
+export async function trackShopOrder(shopId: string, ref: string): Promise<Order | null> {
+  const trimmed = ref.trim();
+  if (!trimmed) return null;
+
+  const upperRef = trimmed.toUpperCase();
+  if (/^PK-[A-Z0-9]+$/.test(upperRef)) {
+    try {
+      const trackSnap = await getDoc(doc(db, 'shops', shopId, 'order_tracking', upperRef));
+      if (trackSnap.exists()) {
+        const td = trackSnap.data();
+        return {
+          id: td.orderId || upperRef,
+          shopId,
+          orderNumber: td.orderNumber,
+          userId: 'tracking',
+          customer: {
+            name: td.customerName || 'Customer',
+            email: '',
+            phone: '',
+            address: '',
+            city: td.city || 'Pakistan',
+            postalCode: '',
+          },
+          items: td.items || [],
+          subtotal: td.total || 0,
+          shippingFee: 0,
+          discount: 0,
+          total: td.total || 0,
+          fulfillmentMethod: td.fulfillmentMethod || 'delivery',
+          pickupDetails: td.pickupDetails,
+          paymentMethod: td.paymentMethod || 'cod',
+          paymentStatus: td.paymentStatus || 'pending',
+          orderStatus: td.orderStatus || 'Pending',
+          courierName: td.courierName,
+          trackingNumber: td.trackingNumber,
+          createdAt: td.createdAt,
+          updatedAt: td.updatedAt,
+        };
+      }
+    } catch {}
+  }
+
+  if (auth.currentUser?.uid) {
+    try {
+      const userOrders = await getShopOrdersByUser(shopId, auth.currentUser.uid);
+      const cleanedInput = trimmed.replace(/[\s-]/g, '');
+      const match = userOrders.find(
+        (o) =>
+          o.orderNumber.toUpperCase() === upperRef ||
+          o.customer?.phone?.replace(/[\s-]/g, '') === cleanedInput
+      );
+      if (match) return match;
+    } catch {}
+  }
+
+  try {
+    const res = await fetch(`/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(trimmed)}`);
+    if (res.ok) {
+      return (await res.json()) as Order;
+    }
+  } catch {}
+
+  return null;
+}
+
+// ====================================================
+// SETTINGS & APPEARANCE & CMS PAGES
+// ====================================================
+
+export async function getShopSettings(shopId: string = DEFAULT_SHOP_ID): Promise<StoreSettings> {
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId, 'settings', 'general'));
+    if (snap.exists()) {
+      const data = snap.data() as Partial<StoreSettings>;
+      return {
+        ...INITIAL_SETTINGS,
+        ...data,
+        bankDetails: { ...INITIAL_SETTINGS.bankDetails, ...(data.bankDetails || {}) },
+        easypaisaDetails: { ...INITIAL_SETTINGS.easypaisaDetails, ...(data.easypaisaDetails || {}) },
+        jazzcashDetails: { ...INITIAL_SETTINGS.jazzcashDetails, ...(data.jazzcashDetails || {}) },
+        selfPickupDetails: { ...INITIAL_SETTINGS.selfPickupDetails, ...(data.selfPickupDetails || {}) },
+        socialLinks: { ...INITIAL_SETTINGS.socialLinks, ...(data.socialLinks || {}) },
+      };
+    }
+    return INITIAL_SETTINGS;
+  } catch {
+    return INITIAL_SETTINGS;
+  }
+}
+
+export async function updateShopSettings(shopId: string, settings: StoreSettings): Promise<void> {
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'settings', 'general'), stripUndefined(settings));
+    // Also mirror logoUrl / name / city onto master shop doc cleanly if changed
+    await updateDoc(doc(db, 'shops', shopId), stripUndefined({
+      name: settings.siteName,
+      logoUrl: settings.logoUrl || '',
+      city: settings.city,
+      address: settings.address,
+      'theme.primaryColor': settings.primaryColor || '#065f46',
+      'theme.accentColor': settings.accentColor || '#d97706',
+      updatedAt: new Date().toISOString(),
+    })).catch(() => {});
+    await logShopActivity(shopId, 'Updated Settings', 'settings', 'general', `Updated settings for ${settings.siteName}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/settings/general`);
+  }
+}
+
+export async function getShopPageContent(shopId: string, key: ShopPageContent['key']): Promise<ShopPageContent | null> {
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId, 'pages', key));
+    return snap.exists() ? (snap.data() as ShopPageContent) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveShopPageContent(shopId: string, page: ShopPageContent): Promise<void> {
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'pages', page.key), stripUndefined(page));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/pages/${page.key}`);
+  }
+}
+
+// ====================================================
+// COUPONS
+// ====================================================
+
+export async function getShopCoupons(shopId: string = DEFAULT_SHOP_ID): Promise<Coupon[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'coupons'));
+    const list: Coupon[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Coupon), id: d.id, shopId }));
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+export async function saveShopCoupon(shopId: string, coupon: Partial<Coupon>): Promise<string> {
+  const { plan } = await getShopAndPlanLimits(shopId);
+  if (!plan?.features?.coupons) {
+    throw new Error('Discount coupons are available on Growth & Enterprise plans. Upgrade your subscription to unlock coupons.');
+  }
+  const id = coupon.id || `cpn_${Date.now()}`;
+  const docData = stripUndefined<Coupon>({
+    id,
+    shopId,
+    code: (coupon.code || 'SALE').toUpperCase().trim(),
+    discountType: coupon.discountType || 'percentage',
+    discountValue: Number(coupon.discountValue) || 10,
+    minOrderValue: Number(coupon.minOrderValue) || 0,
+    expiryDate: coupon.expiryDate || '2028-12-31',
+    usageLimit: coupon.usageLimit || 500,
+    usageCount: coupon.usageCount || 0,
+    isActive: coupon.isActive !== false,
+  });
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'coupons', id), docData);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/coupons/${id}`);
+  }
+}
+
+export async function deleteShopCoupon(shopId: string, id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shops', shopId, 'coupons', id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/coupons/${id}`);
+  }
+}
+
+// ====================================================
+// CART & WISHLIST (TENANT ISOLATED)
+// ====================================================
+
+export async function saveShopUserCart(shopId: string, userId: string, items: CartItem[]): Promise<void> {
+  if (!userId || userId === 'guest') return;
+  try {
+    const cleanItems = items.map((item) =>
+      stripUndefined({
+        productId: item.productId,
+        quantity: item.quantity,
+        selectedVariants: item.selectedVariants || {},
+        itemKey: item.itemKey,
+        title: item.product.title,
+        price: item.product.salePrice ?? item.product.regularPrice,
+        regularPrice: item.product.regularPrice,
+        salePrice: item.product.salePrice,
+        image: item.product.images[0] || FALLBACK_PRODUCT_IMAGE,
+        brand: item.product.brand,
+        category: item.product.category,
+        stock: item.product.stock,
+      })
+    );
+    await setDoc(doc(db, 'shops', shopId, 'carts', userId), {
+      userId,
+      shopId,
+      items: cleanItems,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {}
+}
+
+export async function loadShopUserCart(shopId: string, userId: string): Promise<any[] | null> {
+  if (!userId || userId === 'guest') return null;
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId, 'carts', userId));
+    return snap.exists() ? snap.data().items || [] : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveShopUserWishlist(shopId: string, userId: string, productIds: string[]): Promise<void> {
+  if (!userId || userId === 'guest') return;
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'wishlists', userId), {
+      userId,
+      shopId,
+      productIds,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {}
+}
+
+export async function loadShopUserWishlist(shopId: string, userId: string): Promise<string[]> {
+  if (!userId || userId === 'guest') return [];
+  try {
+    const snap = await getDoc(doc(db, 'shops', shopId, 'wishlists', userId));
+    return snap.exists() ? snap.data().productIds || [] : [];
+  } catch {
+    return [];
+  }
+}
+
+// ====================================================
+// REVIEWS, INVENTORY, CUSTOMERS, CONTACT MESSAGES
+// ====================================================
+
+export async function getShopProductReviews(shopId: string, productId: string): Promise<Review[]> {
+  try {
+    const q = query(collection(db, 'shops', shopId, 'reviews'), where('productId', '==', productId));
+    const snap = await getDocs(q);
+    const list: Review[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Review), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function addShopProductReview(shopId: string, review: Omit<Review, 'id' | 'createdAt'>): Promise<string> {
+  const id = `rev_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  const payload = stripUndefined({
+    ...review,
+    id,
+    shopId,
+    createdAt: new Date().toISOString(),
+  });
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'reviews', id), payload);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/reviews/${id}`);
+  }
+}
+
+export async function getShopInventoryLogs(shopId: string): Promise<InventoryLog[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'inventory_logs'));
+    const list: InventoryLog[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as InventoryLog), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function adjustShopStock(
+  shopId: string,
+  productId: string,
+  delta: number,
+  reason: string,
+  updatedBy: string
+): Promise<void> {
+  const prodRef = doc(db, 'shops', shopId, 'products', productId);
+  try {
+    const snap = await getDoc(prodRef);
+    if (!snap.exists()) throw new Error('Product not found in this shop');
+    const prod = snap.data() as Product;
+    const previousStock = prod.stock || 0;
+    const newStock = Math.max(0, previousStock + delta);
+    await updateDoc(prodRef, { stock: newStock, updatedAt: new Date().toISOString() });
+
+    const logId = `log_${Date.now()}`;
+    await setDoc(doc(db, 'shops', shopId, 'inventory_logs', logId), {
+      id: logId,
+      shopId,
+      productId,
+      productTitle: prod.title,
+      changeQuantity: delta,
+      previousStock,
+      newStock,
+      reason,
+      updatedBy,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/products/${productId}`);
+  }
+}
+
+export async function getShopCustomers(shopId: string): Promise<ShopCustomerSummary[]> {
+  const orders = await getAllShopOrdersAdmin(shopId);
+  const map = new Map<string, ShopCustomerSummary>();
+
+  for (const ord of orders) {
+    const phoneKey = (ord.customer?.phone || ord.customer?.email || ord.id).replace(/[\s-]/g, '');
+    const existing = map.get(phoneKey);
+    if (!existing) {
+      map.set(phoneKey, {
+        id: phoneKey,
+        name: ord.customer?.name || 'Guest',
+        email: ord.customer?.email || '',
+        phone: ord.customer?.phone || '',
+        city: ord.customer?.city || '',
+        ordersCount: 1,
+        totalSpent: ord.orderStatus !== 'Cancelled' ? Number(ord.total || 0) : 0,
+        lastOrderAt: ord.createdAt,
+        createdAt: ord.createdAt,
+      });
+    } else {
+      existing.ordersCount += 1;
+      if (ord.orderStatus !== 'Cancelled') {
+        existing.totalSpent += Number(ord.total || 0);
+      }
+      if (new Date(ord.createdAt) > new Date(existing.lastOrderAt)) {
+        existing.lastOrderAt = ord.createdAt;
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.totalSpent - a.totalSpent);
+}
+
+export async function saveShopContactMessage(
+  shopId: string,
+  msg: Omit<ContactMessage, 'id' | 'status' | 'createdAt'>
+): Promise<string> {
+  const id = `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  const docData = stripUndefined<ContactMessage>({
+    id,
+    shopId,
+    name: msg.name.trim(),
+    email: msg.email.trim(),
+    phone: msg.phone?.trim() || undefined,
+    subject: msg.subject?.trim() || undefined,
+    message: msg.message.trim(),
+    status: 'new',
+    createdAt: new Date().toISOString(),
+  });
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'contact_messages', id), docData);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/contact_messages/${id}`);
+  }
+}
+
+export async function getShopContactMessages(shopId: string): Promise<ContactMessage[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'contact_messages'));
+    const list: ContactMessage[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as ContactMessage), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function updateShopContactMessageStatus(shopId: string, msgId: string, status: 'new' | 'resolved'): Promise<void> {
+  await updateDoc(doc(db, 'shops', shopId, 'contact_messages', msgId), { status });
+}
+
+// ====================================================
+// STAFF MANAGEMENT & INVITES
+// ====================================================
+
+export async function getShopStaff(shopId: string): Promise<{ staff: StaffMember[]; invites: ShopInvite[] }> {
+  try {
+    const [staffSnap, invitesSnap] = await Promise.all([
+      getDocs(collection(db, 'shops', shopId, 'staff')),
+      getDocs(query(collection(db, 'shop_invites'), where('shopId', '==', shopId))),
+    ]);
+    const staff: StaffMember[] = [];
+    staffSnap.forEach((d) => staff.push({ ...(d.data() as StaffMember), uid: d.id }));
+    const invites: ShopInvite[] = [];
+    invitesSnap.forEach((d) => invites.push({ ...(d.data() as ShopInvite), id: d.id }));
+    return { staff, invites: invites.filter((i) => i.status === 'pending') };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `shops/${shopId}/staff`);
+  }
+}
+
+export async function inviteShopStaff(
+  shopId: string,
+  shopName: string,
+  shopSlug: string,
+  input: {
+    email: string;
+    name: string;
+    role: 'shop_admin' | 'shop_staff';
+    permissions: StaffPermission[];
+  }
+): Promise<string> {
+  const { plan } = await getShopAndPlanLimits(shopId);
+  const current = await getShopStaff(shopId);
+  const totalHeadcount = current.staff.length + current.invites.length;
+  if (totalHeadcount >= (plan?.maxStaff || 1)) {
+    throw new Error(`Staff seat limit reached (${totalHeadcount}/${plan.maxStaff}). Upgrade your plan to add more team members.`);
+  }
+
+  const inviteId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const payload: ShopInvite = {
+    id: inviteId,
+    shopId,
+    shopName,
+    shopSlug,
+    email: input.email.trim().toLowerCase(),
+    name: input.name.trim(),
+    role: input.role,
+    permissions: input.permissions,
+    invitedBy: auth.currentUser?.email || 'owner',
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(doc(db, 'shop_invites', inviteId), payload);
+    await logShopActivity(shopId, 'Invited Staff', 'staff', inviteId, `Invited ${payload.email} as ${payload.role}`);
+    return inviteId;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `shop_invites/${inviteId}`);
+  }
+}
+
+export async function updateShopStaffRole(
+  shopId: string,
+  staffUid: string,
+  role: 'shop_admin' | 'shop_staff',
+  permissions: StaffPermission[],
+  status: 'active' | 'inactive'
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'shops', shopId, 'staff', staffUid), {
+      role,
+      permissions,
+      status,
+      updatedAt: new Date().toISOString(),
+    });
+    await updateDoc(doc(db, 'users', staffUid, 'shopMemberships', shopId), {
+      role,
+      permissions,
+    }).catch(() => {});
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/staff/${staffUid}`);
+  }
+}
+
+export async function removeShopStaff(shopId: string, staffUid: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shops', shopId, 'staff', staffUid));
+    await deleteDoc(doc(db, 'users', staffUid, 'shopMemberships', shopId)).catch(() => {});
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/staff/${staffUid}`);
+  }
+}
+
+export async function cancelShopInvite(shopId: string, inviteId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shop_invites', inviteId));
+    await logShopActivity(shopId, 'Cancelled Invite', 'staff', inviteId, `Revoked pending invite ${inviteId}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `shop_invites/${inviteId}`);
+  }
+}

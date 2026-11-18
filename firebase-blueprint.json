@@ -1,0 +1,239 @@
+{
+  "entities": {
+    "PlatformAdmin": {
+      "title": "Platform Super Admin",
+      "description": "Authorized platform owner / super administrator record",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["super_admin"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["email", "role"]
+    },
+    "PlatformSettings": {
+      "title": "Platform Settings",
+      "description": "SaaS platform configuration and Super Admin billing accounts",
+      "type": "object",
+      "properties": {
+        "platformName": { "type": "string" },
+        "supportEmail": { "type": "string" },
+        "supportPhone": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "easypaisaDetails": { "type": "object" },
+        "jazzcashDetails": { "type": "object" },
+        "bankDetails": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "SubscriptionPlan": {
+      "title": "SaaS Subscription Plan",
+      "description": "Tenant subscription tier definition in PKR",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "description": { "type": "string" },
+        "monthlyPrice": { "type": "number" },
+        "yearlyPrice": { "type": "number" },
+        "durationDays": { "type": "number" },
+        "maxProducts": { "type": "number" },
+        "maxStorageMB": { "type": "number" },
+        "maxStaff": { "type": "number" },
+        "features": { "type": "object" },
+        "isActive": { "type": "boolean" },
+        "isPopular": { "type": "boolean" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "name", "monthlyPrice", "maxProducts", "maxStorageMB", "isActive"]
+    },
+    "PlatformPayment": {
+      "title": "Subscription Payment Request",
+      "description": "Shop owner payment proof submitted for Super Admin approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "shopName": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "planId": { "type": "string" },
+        "planName": { "type": "string" },
+        "billingCycle": { "type": "string", "enum": ["monthly", "yearly"] },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["easypaisa", "jazzcash", "bank_transfer"] },
+        "transactionId": { "type": "string" },
+        "senderNumber": { "type": "string" },
+        "proofUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "rejectionReason": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "shopId", "ownerId", "planId", "amount", "method", "status"]
+    },
+    "Shop": {
+      "title": "Tenant Shop",
+      "description": "Independent tenant merchant store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "slug": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "ownerPhone": { "type": "string" },
+        "city": { "type": "string" },
+        "address": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "suspended"] },
+        "subscription": { "type": "object" },
+        "usage": { "type": "object" },
+        "theme": { "type": "object" },
+        "lastActivityAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "slug", "name", "ownerId", "status", "subscription"]
+    },
+    "ShopSlug": {
+      "title": "Shop Slug Registry",
+      "description": "Unique slug index for instant storefront resolution",
+      "type": "object",
+      "properties": {
+        "slug": { "type": "string" },
+        "shopId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["slug", "shopId", "ownerId"]
+    },
+    "ShopInvite": {
+      "title": "Shop Staff Invite",
+      "description": "Email-based staff invitation for a tenant shop",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "shopName": { "type": "string" },
+        "shopSlug": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["shop_admin", "shop_staff"] },
+        "permissions": { "type": "array" },
+        "status": { "type": "string", "enum": ["pending", "accepted"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "shopId", "email", "role", "status"]
+    },
+    "User": {
+      "title": "User Profile",
+      "description": "Platform user account and saved addresses",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "role": { "type": "string", "enum": ["customer", "shop_owner", "shop_admin", "shop_staff", "super_admin"] },
+        "isBlocked": { "type": "boolean" },
+        "addresses": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "firestore": {
+    "/platform_admins/{uid}": {
+      "schema": { "$ref": "#/entities/PlatformAdmin" },
+      "description": "Platform Super Admin identities"
+    },
+    "/platform_settings/{docId}": {
+      "schema": { "$ref": "#/entities/PlatformSettings" },
+      "description": "Global platform configuration and payment details"
+    },
+    "/platform_plans/{planId}": {
+      "schema": { "$ref": "#/entities/SubscriptionPlan" },
+      "description": "SaaS subscription pricing tiers"
+    },
+    "/platform_payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/PlatformPayment" },
+      "description": "Subscription payment proof submissions"
+    },
+    "/platform_activity_logs/{logId}": {
+      "description": "Platform audit logs"
+    },
+    "/shop_slugs/{slug}": {
+      "schema": { "$ref": "#/entities/ShopSlug" },
+      "description": "Public slug registry mapping slugs to shopIds"
+    },
+    "/shop_invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/ShopInvite" },
+      "description": "Pending staff invitations"
+    },
+    "/shops/{shopId}": {
+      "schema": { "$ref": "#/entities/Shop" },
+      "description": "Master tenant store documents"
+    },
+    "/shops/{shopId}/products/{productId}": {
+      "description": "Tenant product catalog"
+    },
+    "/shops/{shopId}/categories/{categoryId}": {
+      "description": "Tenant product categories"
+    },
+    "/shops/{shopId}/banners/{bannerId}": {
+      "description": "Tenant storefront banners"
+    },
+    "/shops/{shopId}/settings/{settingId}": {
+      "description": "Tenant storefront general, payment, delivery, and self-pickup settings"
+    },
+    "/shops/{shopId}/coupons/{couponId}": {
+      "description": "Tenant discount coupons"
+    },
+    "/shops/{shopId}/orders/{orderId}": {
+      "description": "Tenant customer orders"
+    },
+    "/shops/{shopId}/order_tracking/{orderNumber}": {
+      "description": "Non-PII public order tracking views for a tenant"
+    },
+    "/shops/{shopId}/reviews/{reviewId}": {
+      "description": "Tenant product reviews"
+    },
+    "/shops/{shopId}/inventory_logs/{logId}": {
+      "description": "Tenant stock movement audit logs"
+    },
+    "/shops/{shopId}/contact_messages/{messageId}": {
+      "description": "Tenant customer helpdesk inquiries"
+    },
+    "/shops/{shopId}/staff/{uid}": {
+      "description": "Tenant staff role & module permissions"
+    },
+    "/shops/{shopId}/carts/{uid}": {
+      "description": "Tenant-scoped customer shopping carts"
+    },
+    "/shops/{shopId}/wishlists/{uid}": {
+      "description": "Tenant-scoped customer wishlists"
+    },
+    "/shops/{shopId}/activity_logs/{logId}": {
+      "description": "Tenant admin activity logs"
+    },
+    "/shops/{shopId}/notifications/{notifId}": {
+      "description": "Tenant admin notifications"
+    },
+    "/shops/{shopId}/pages/{pageKey}": {
+      "description": "Tenant custom CMS pages (about, faq, return policy, terms, privacy)"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Global user profiles"
+    },
+    "/users/{userId}/shopMemberships/{shopId}": {
+      "description": "User's authorized shop memberships for fast workspace resolution"
+    }
+  }
+}
