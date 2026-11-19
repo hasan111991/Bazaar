@@ -152,9 +152,9 @@ export function buildShopSeoTags(params: {
 }
 
 export function buildPlatformSeoTags(canonicalUrl = resolveCanonicalUrl('/')): GeneratedSeoTags {
-  const title = 'BazaarPK Cloud – Multi-Tenant Retail & Ecommerce SaaS for Pakistan';
+  const title = 'BazaarPK Cloud – Smart Business Management & Online Store SaaS';
   const description =
-    'Launch your Pakistani general store, cosmetics shop, or clothing store online in 60 seconds with POS billing, Khata ledger, COD & EasyPaisa/JazzCash.';
+    'Manage products, stock inventory, POS billing, Khata credit ledger, and your own online storefront across Pakistan with COD, EasyPaisa, JazzCash & Self-Pickup.';
 
   return {
     title,

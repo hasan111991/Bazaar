@@ -516,4 +516,27 @@ describe('Dynamic SEO Tag Generator & Stage 1 Retail Helpers', () => {
     expect(val.retailValuation).toBe(12000);
     expect(val.missingCostCount).toBe(1);
   });
+
+  it('keeps public landing page free of /super-admin links, pharmacy claims, or pulsing dots', () => {
+    const publicFiles = [
+      'src/platform/PlatformLandingPage.tsx',
+      'src/platform/components/PublicNavbar.tsx',
+      'src/platform/components/Hero3DShowcase.tsx',
+      'src/platform/components/FeaturesAndSolutionsSection.tsx',
+      'src/platform/components/ShowcaseAndPricingSection.tsx',
+    ];
+    for (const rel of publicFiles) {
+      const src = fs.readFileSync(path.join(WORKSPACE_ROOT, rel), 'utf-8');
+      expect(src).not.toContain('/super-admin');
+      expect(src.toLowerCase()).not.toContain('pharmacy');
+      expect(src).not.toContain('animate-pulse');
+    }
+    const landingSrc = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'src/platform/PlatformLandingPage.tsx'),
+      'utf-8'
+    );
+    expect(landingSrc).toContain('getSubscriptionPlans');
+    expect(landingSrc).toContain('getActiveDirectoryShopsPublic');
+  });
 });
+
