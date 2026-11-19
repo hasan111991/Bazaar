@@ -1,18 +1,15 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './src/firebase/config';
 import {
-  collection,
   doc,
   getDoc,
-  getDocs,
   writeBatch,
-  query,
-  where,
 } from 'firebase/firestore';
 
 dotenv.config();
@@ -57,20 +54,24 @@ function sanitizeShopId(raw: unknown): string {
   return 'bazaarpk';
 }
 
-function getPhoneVariants(rawPhone: string): string[] {
-  const cleaned = rawPhone.replace(/[\s-]/g, '');
-  const variants = new Set<string>([rawPhone.trim(), cleaned]);
-  if (/^03[0-9]{9}$/.test(cleaned)) {
-    variants.add(`+92${cleaned.slice(1)}`);
-    variants.add(`92${cleaned.slice(1)}`);
-  } else if (/^\+923[0-9]{9}$/.test(cleaned)) {
-    variants.add(`0${cleaned.slice(3)}`);
-    variants.add(cleaned.slice(1));
-  } else if (/^923[0-9]{9}$/.test(cleaned)) {
-    variants.add(`0${cleaned.slice(2)}`);
-    variants.add(`+${cleaned}`);
+function generateServerTrackingToken(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function computeTrackingTokenHash(orderNumber: string, token: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${orderNumber.trim().toUpperCase()}:${token.trim()}`)
+    .digest('hex');
+}
+
+function safeEqualHex(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+  } catch {
+    return false;
   }
-  return Array.from(variants);
 }
 
 async function startServer() {
@@ -219,12 +220,16 @@ Format cleanly in markdown with:
 
       const orderNumber = `PK-${Math.floor(100000 + Math.random() * 900000)}`;
       const orderId = `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const trackingToken = generateServerTrackingToken();
+      const trackingTokenHash = computeTrackingTokenHash(orderNumber, trackingToken);
+      const trackingDocId = `trk_${trackingTokenHash.slice(0, 32)}`;
       const now = new Date().toISOString();
 
       const newOrder = stripUndefined({
         id: orderId,
         shopId,
         orderNumber,
+        trackingTokenHash,
         userId: userId || 'guest',
         customer: {
           name: customer.name.trim(),
@@ -257,12 +262,21 @@ Format cleanly in markdown with:
       const trackingDoc = stripUndefined({
         orderNumber,
         orderId,
+        shopId,
+        trackingTokenHash,
         orderStatus: 'Pending',
         fulfillmentMethod: newOrder.fulfillmentMethod,
-        pickupDetails: newOrder.pickupDetails,
+        pickupDetails: newOrder.pickupDetails
+          ? {
+              locationName: newOrder.pickupDetails.locationName,
+              address: newOrder.pickupDetails.address,
+              city: newOrder.pickupDetails.city,
+              timings: newOrder.pickupDetails.timings,
+            }
+          : undefined,
         paymentMethod: newOrder.paymentMethod,
         paymentStatus: 'pending',
-        customerName: newOrder.customer.name,
+        customerName: newOrder.customer.name.split(' ')[0] || 'Customer',
         city: newOrder.customer.city,
         items: (items || []).map((it: any) => ({
           productId: it.productId || '',
@@ -279,7 +293,7 @@ Format cleanly in markdown with:
       if (newOrder.userId === 'guest') {
         const batch = writeBatch(db);
         batch.set(doc(db, 'shops', shopId, 'orders', orderId), newOrder);
-        batch.set(doc(db, 'shops', shopId, 'order_tracking', orderNumber), trackingDoc);
+        batch.set(doc(db, 'shops', shopId, 'order_tracking', trackingDocId), trackingDoc);
         const notifId = `ntf_${Date.now()}`;
         batch.set(doc(db, 'shops', shopId, 'notifications', notifId), {
           id: notifId,
@@ -291,17 +305,17 @@ Format cleanly in markdown with:
           createdAt: now,
         });
         await batch.commit();
-        return res.status(201).json(newOrder);
+        return res.status(201).json({ ...newOrder, trackingToken });
       }
 
-      return res.status(200).json({ ...newOrder, requiresClientAuthWrite: true });
+      return res.status(200).json({ ...newOrder, trackingToken, requiresClientAuthWrite: true });
     } catch (err: any) {
       console.error('Error creating tenant order on server:', err);
       return res.status(500).json({ error: err.message || 'Failed to place order' });
     }
   });
 
-  // API Route: Multi-Tenant Order Tracking (Zero PII Exposure)
+  // API Route: Token-Verified Non-PII Order Tracking (Strictly requires tracking token)
   app.get('/api/orders/track', async (req, res) => {
     const clientIp = req.ip || 'unknown';
     if (!checkRateLimit(clientIp, 'order-track', 40, 60_000)) {
@@ -310,90 +324,41 @@ Format cleanly in markdown with:
 
     try {
       const shopId = sanitizeShopId(req.query.shopId);
-      const ref = String(req.query.ref || '').trim();
-      if (!ref) {
-        return res.status(400).json({ error: 'Order reference is required' });
+      const ref = String(req.query.ref || '').trim().toUpperCase();
+      const token = String(req.query.token || '').trim();
+      if (!ref || !token) {
+        return res.status(400).json({
+          error: 'Order number and tracking token are required to view tracking status.',
+        });
       }
 
-      const normalizedOrderNum = ref.toUpperCase();
-
-      // 1. Direct lookup in tenant non-PII order_tracking
-      if (/^PK-[A-Z0-9]+$/.test(normalizedOrderNum)) {
-        const trackSnap = await getDoc(doc(db, 'shops', shopId, 'order_tracking', normalizedOrderNum));
-        if (trackSnap.exists()) {
-          const td = trackSnap.data();
-          return res.json({
-            id: td.orderId || normalizedOrderNum,
-            shopId,
-            orderNumber: td.orderNumber,
-            orderStatus: td.orderStatus,
-            fulfillmentMethod: td.fulfillmentMethod || 'delivery',
-            pickupDetails: td.pickupDetails,
-            paymentMethod: td.paymentMethod,
-            paymentStatus: td.paymentStatus,
-            courierName: td.courierName,
-            trackingNumber: td.trackingNumber,
-            createdAt: td.createdAt,
-            total: td.total,
-            customer: { name: td.customerName, city: td.city },
-            items: td.items || [],
-          });
-        }
+      const expectedHash = computeTrackingTokenHash(ref, token);
+      const trackingDocId = `trk_${expectedHash.slice(0, 32)}`;
+      const trackSnap = await getDoc(doc(db, 'shops', shopId, 'order_tracking', trackingDocId));
+      if (!trackSnap.exists()) {
+        return res.status(404).json({ error: 'Order not found or invalid tracking token.' });
       }
 
-      // 2. Tenant guest orders query
-      const q1 = query(
-        collection(db, 'shops', shopId, 'orders'),
-        where('userId', '==', 'guest'),
-        where('orderNumber', '==', normalizedOrderNum)
-      );
-      let snap = await getDocs(q1);
-
-      // 3. Tenant guest orders query by phone variants
-      if (snap.empty) {
-        const phoneVariants = getPhoneVariants(ref);
-        for (const variant of phoneVariants) {
-          const qPhone = query(
-            collection(db, 'shops', shopId, 'orders'),
-            where('userId', '==', 'guest'),
-            where('customer.phone', '==', variant)
-          );
-          const phoneSnap = await getDocs(qPhone);
-          if (!phoneSnap.empty) {
-            snap = phoneSnap;
-            break;
-          }
-        }
+      const td = trackSnap.data();
+      if (!safeEqualHex(String(td.trackingTokenHash || ''), expectedHash)) {
+        return res.status(403).json({ error: 'Invalid tracking token.' });
       }
 
-      if (snap.empty) {
-        return res.status(404).json({ error: 'Order not found' });
-      }
-
-      const sortedDocs = [...snap.docs].sort((a, b) =>
-        String(b.data().createdAt || '').localeCompare(String(a.data().createdAt || ''))
-      );
-      const docData = sortedDocs[0].data();
       return res.json({
-        id: sortedDocs[0].id,
+        id: td.orderId || ref,
         shopId,
-        orderNumber: docData.orderNumber,
-        orderStatus: docData.orderStatus,
-        fulfillmentMethod: docData.fulfillmentMethod || 'delivery',
-        pickupDetails: docData.pickupDetails,
-        paymentMethod: docData.paymentMethod,
-        paymentStatus: docData.paymentStatus,
-        courierName: docData.courierName,
-        trackingNumber: docData.trackingNumber,
-        createdAt: docData.createdAt,
-        total: docData.total,
-        customer: { name: docData.customer?.name, city: docData.customer?.city },
-        items: (docData.items || []).map((it: any) => ({
-          title: it.title,
-          quantity: it.quantity,
-          price: it.price,
-          image: it.image,
-        })),
+        orderNumber: td.orderNumber,
+        orderStatus: td.orderStatus,
+        fulfillmentMethod: td.fulfillmentMethod || 'delivery',
+        pickupDetails: td.pickupDetails,
+        paymentMethod: td.paymentMethod,
+        paymentStatus: td.paymentStatus,
+        courierName: td.courierName,
+        trackingNumber: td.trackingNumber,
+        createdAt: td.createdAt,
+        total: td.total,
+        customer: { name: td.customerName, city: td.city },
+        items: td.items || [],
       });
     } catch (err: any) {
       console.error('Error tracking order:', err);
@@ -404,8 +369,8 @@ Format cleanly in markdown with:
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (req, res) => {
-      if (!req.path.startsWith('/api') && req.path !== '/' && !path.extname(req.path)) {
-        return res.redirect(`/#${req.originalUrl}`);
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'API route not found' });
       }
       return res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });

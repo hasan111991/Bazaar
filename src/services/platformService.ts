@@ -11,10 +11,12 @@ import {
   writeBatch,
   orderBy,
   limit,
+  runTransaction,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import {
   Shop,
+  ShopPublic,
   ShopStatus,
   SubscriptionPlan,
   PlatformSettings,
@@ -49,6 +51,56 @@ export function stripUndefined<T>(obj: T): T {
     return cleaned as T;
   }
   return obj;
+}
+
+/**
+ * Maps a master private Shop document into the strict non-PII ShopPublic projection
+ * permitted for public storefront reading under firestore.rules.
+ */
+export function toShopPublic(shop: Shop | ShopPublic, publicSettings?: Partial<StoreSettings>): ShopPublic {
+  return stripUndefined<ShopPublic>({
+    id: shop.id,
+    slug: shop.slug,
+    name: shop.name,
+    logoUrl: shop.logoUrl || publicSettings?.logoUrl || '',
+    city: shop.city || publicSettings?.city || '',
+    publicContactPhone: publicSettings?.contactPhone || ('publicContactPhone' in shop ? shop.publicContactPhone : undefined),
+    publicSupportEmail: publicSettings?.contactEmail || ('publicSupportEmail' in shop ? shop.publicSupportEmail : undefined),
+    storefrontAddress: publicSettings?.address || ('storefrontAddress' in shop ? shop.storefrontAddress : undefined),
+    theme: shop.theme,
+    status: shop.status,
+    createdAt: shop.createdAt,
+    updatedAt: shop.updatedAt || new Date().toISOString(),
+  });
+}
+
+export function getShopSubscriptionStatus(shop?: Shop | null) {
+  if (!shop) {
+    return {
+      isSuspended: false,
+      isExpired: false,
+      daysRemaining: 0,
+      effectiveStatus: 'unknown' as const,
+    };
+  }
+  const now = new Date();
+  const isSuspended = shop.status === 'suspended' || shop.status === 'inactive';
+  const expiryTime = shop.subscription?.expiryDate ? new Date(shop.subscription.expiryDate).getTime() : 0;
+  const isFreeStarter = shop.subscription?.planId === 'free-starter' && shop.subscription?.status === 'active';
+  const isExpired =
+    !isFreeStarter &&
+    (shop.subscription?.status === 'expired' ||
+      shop.subscription?.status === 'cancelled' ||
+      (expiryTime > 0 && expiryTime < now.getTime()));
+
+  const daysRemaining = expiryTime > now.getTime() ? Math.ceil((expiryTime - now.getTime()) / 86400000) : 0;
+
+  return {
+    isSuspended,
+    isExpired,
+    daysRemaining,
+    effectiveStatus: isSuspended ? shop.status : isExpired ? 'expired' : shop.subscription?.status || 'active',
+  };
 }
 
 // ====================================================
@@ -204,14 +256,65 @@ export async function checkSlugAvailability(rawSlug: string): Promise<{ availabl
     };
   }
   try {
-    const snap = await getDoc(doc(db, 'shop_slugs', cleanSlug));
-    if (snap.exists()) {
+    const [slugSnap, publicSnap] = await Promise.all([
+      getDoc(doc(db, 'shop_slugs', cleanSlug)),
+      getDoc(doc(db, 'shops_public', cleanSlug)),
+    ]);
+    if (slugSnap.exists() || publicSnap.exists()) {
       return { available: false, cleanSlug, reason: 'This shop URL slug is already taken.' };
     }
     return { available: true, cleanSlug };
   } catch (err) {
     console.warn('Slug check warning:', err);
     return { available: true, cleanSlug };
+  }
+}
+
+/**
+ * Public-safe storefront lookup: reads ONLY /shop_slugs/{slug} + /shops_public/{shopId}.
+ * Never touches private /shops/{shopId} documents containing owner PII or billing data.
+ */
+export async function getShopPublicBySlug(slug: string): Promise<ShopPublic | null> {
+  const cleanSlug = sanitizeShopSlug(slug);
+  if (!cleanSlug) return null;
+  try {
+    const slugSnap = await getDoc(doc(db, 'shop_slugs', cleanSlug));
+    if (slugSnap.exists()) {
+      const shopId = slugSnap.data().shopId;
+      const pubSnap = await getDoc(doc(db, 'shops_public', shopId));
+      if (pubSnap.exists()) {
+        return { ...(pubSnap.data() as ShopPublic), id: pubSnap.id };
+      }
+    }
+    const directPubSnap = await getDoc(doc(db, 'shops_public', cleanSlug));
+    if (directPubSnap.exists()) {
+      return { ...(directPubSnap.data() as ShopPublic), id: directPubSnap.id };
+    }
+    return null;
+  } catch (err) {
+    console.warn('getShopPublicBySlug error:', err);
+    return null;
+  }
+}
+
+export async function getShopPublicById(shopId: string): Promise<ShopPublic | null> {
+  try {
+    const pubSnap = await getDoc(doc(db, 'shops_public', shopId));
+    return pubSnap.exists() ? { ...(pubSnap.data() as ShopPublic), id: pubSnap.id } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getActiveDirectoryShopsPublic(): Promise<ShopPublic[]> {
+  try {
+    const q = query(collection(db, 'shops_public'), where('status', '==', 'active'));
+    const snap = await getDocs(q);
+    const list: ShopPublic[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as ShopPublic), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  } catch {
+    return [];
   }
 }
 
@@ -227,14 +330,13 @@ export async function getShopBySlug(slug: string): Promise<Shop | null> {
         return { ...(shopSnap.data() as Shop), id: shopSnap.id };
       }
     }
-    // Fallback direct lookup if shopId == slug
     const directSnap = await getDoc(doc(db, 'shops', cleanSlug));
     if (directSnap.exists()) {
       return { ...(directSnap.data() as Shop), id: directSnap.id };
     }
     return null;
   } catch (err) {
-    console.warn('getShopBySlug error:', err);
+    console.warn('getShopBySlug note:', err);
     return null;
   }
 }
@@ -248,16 +350,8 @@ export async function getShopById(shopId: string): Promise<Shop | null> {
   }
 }
 
-export async function getActiveDirectoryShops(): Promise<Shop[]> {
-  try {
-    const q = query(collection(db, 'shops'), where('status', '==', 'active'));
-    const snap = await getDocs(q);
-    const list: Shop[] = [];
-    snap.forEach((d) => list.push({ ...(d.data() as Shop), id: d.id }));
-    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
-  }
+export async function getActiveDirectoryShops(): Promise<ShopPublic[]> {
+  return getActiveDirectoryShopsPublic();
 }
 
 export async function getAllShopsAdmin(): Promise<Shop[]> {
@@ -300,8 +394,6 @@ export async function registerNewShop(input: {
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // Security rules ensure client registration starts on free-starter active OR 14-day trial
-  // (paid activation requires Super Admin approval of submitted payment proof)
   const trialDays = isFree ? (chosenPlan.durationDays || 365) : 14;
   const expiryDate = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000).toISOString();
   const shopId = slugCheck.cleanSlug;
@@ -348,7 +440,7 @@ export async function registerNewShop(input: {
   };
 
   try {
-    // Step 1: Reserve slug first
+    // Step 1: Reserve slug first atomically (rule rejects if /shops/{shopId} already exists)
     await setDoc(doc(db, 'shop_slugs', slugCheck.cleanSlug), {
       slug: slugCheck.cleanSlug,
       shopId,
@@ -357,11 +449,14 @@ export async function registerNewShop(input: {
       createdAt: nowIso,
     });
 
-    // Step 2: Create master shop doc so subsequent security rule get() checks succeed
+    // Step 2: Create private master shop doc
     await setDoc(doc(db, 'shops', shopId), stripUndefined(newShop));
 
-    // Step 3: Batch initialize tenant staff owner, membership, settings, and starter categories
+    // Step 3: Batch initialize public mirror, owner staff, membership, split settings (public + private), starter categories
     const batch = writeBatch(db);
+
+    const publicDoc = toShopPublic(newShop, { city: newShop.city, address: newShop.address });
+    batch.set(doc(db, 'shops_public', shopId), stripUndefined(publicDoc));
 
     const ownerStaff: StaffMember = {
       uid: input.ownerId,
@@ -397,7 +492,7 @@ export async function registerNewShop(input: {
     };
     batch.set(doc(db, 'users', input.ownerId, 'shopMemberships', shopId), stripUndefined(membership));
 
-    const initialSettings: StoreSettings = {
+    const fullSettings: StoreSettings = {
       ...INITIAL_SETTINGS,
       siteName: newShop.name,
       contactPhone: input.ownerPhone.trim(),
@@ -427,7 +522,42 @@ export async function registerNewShop(input: {
         contactPhone: input.ownerPhone.trim(),
       },
     };
-    batch.set(doc(db, 'shops', shopId, 'settings', 'general'), stripUndefined(initialSettings));
+
+    const publicSettingsPayload = {
+      siteName: fullSettings.siteName,
+      logoUrl: fullSettings.logoUrl,
+      primaryColor: fullSettings.primaryColor,
+      accentColor: fullSettings.accentColor,
+      announcement: fullSettings.announcement,
+      contactPhone: fullSettings.contactPhone,
+      whatsappNumber: fullSettings.whatsappNumber,
+      contactEmail: fullSettings.contactEmail,
+      address: fullSettings.address,
+      city: fullSettings.city,
+      shippingFee: fullSettings.shippingFee,
+      freeShippingThreshold: fullSettings.freeShippingThreshold,
+      currency: fullSettings.currency,
+      currencySymbol: fullSettings.currencySymbol,
+      aboutUs: fullSettings.aboutUs,
+      selfPickupDetails: fullSettings.selfPickupDetails,
+      socialLinks: fullSettings.socialLinks,
+      easypaisaDetails: fullSettings.easypaisaDetails.enabled ? fullSettings.easypaisaDetails : { enabled: false, accountTitle: '', accountNumber: '' },
+      jazzcashDetails: fullSettings.jazzcashDetails.enabled ? fullSettings.jazzcashDetails : { enabled: false, accountTitle: '', accountNumber: '' },
+      bankDetails: fullSettings.bankDetails,
+      updatedAt: nowIso,
+    };
+
+    const privateSettingsPayload = {
+      bankDetails: fullSettings.bankDetails,
+      easypaisaDetails: fullSettings.easypaisaDetails,
+      jazzcashDetails: fullSettings.jazzcashDetails,
+      ownerBillingEmail: input.ownerEmail.trim(),
+      ownerPrivatePhone: input.ownerPhone.trim(),
+      updatedAt: nowIso,
+    };
+
+    batch.set(doc(db, 'shops', shopId, 'settings', 'public'), stripUndefined(publicSettingsPayload));
+    batch.set(doc(db, 'shops', shopId, 'settings', 'private'), stripUndefined(privateSettingsPayload));
 
     for (const cat of INITIAL_CATEGORIES.slice(0, 4)) {
       batch.set(doc(db, 'shops', shopId, 'categories', cat.id), stripUndefined({ ...cat, shopId }));
@@ -435,7 +565,6 @@ export async function registerNewShop(input: {
 
     await batch.commit();
 
-    // Step 4: If user selected paid plan and submitted payment proof, record payment request
     if (!isFree && input.paymentProof) {
       const amount = input.billingCycle === 'yearly' ? chosenPlan.yearlyPrice : chosenPlan.monthlyPrice;
       await submitSubscriptionPayment({
@@ -465,10 +594,10 @@ export async function registerNewShop(input: {
 export async function updateShopStatus(shopId: string, status: ShopStatus): Promise<void> {
   const now = new Date().toISOString();
   try {
-    await updateDoc(doc(db, 'shops', shopId), {
-      status,
-      updatedAt: now,
-    });
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
+    batch.set(doc(db, 'shops_public', shopId), { status, updatedAt: now }, { merge: true });
+    await batch.commit();
     await logPlatformActivity(`Shop ${status}`, 'shop', shopId, `Changed shop ${shopId} status to ${status}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
@@ -505,11 +634,14 @@ export async function assignShopSubscription(
   };
 
   try {
-    await updateDoc(doc(db, 'shops', shopId), {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'shops', shopId), {
       subscription: stripUndefined(subscription),
       status: 'active',
       updatedAt: startDate,
     });
+    batch.set(doc(db, 'shops_public', shopId), { status: 'active', updatedAt: startDate }, { merge: true });
+    await batch.commit();
     await logPlatformActivity(
       'Updated Shop Plan',
       'shop',
@@ -523,19 +655,24 @@ export async function assignShopSubscription(
 
 export async function extendShopSubscription(shopId: string, extraDays: number): Promise<void> {
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId));
-    if (!snap.exists()) throw new Error('Shop not found');
-    const shop = snap.data() as Shop;
-    const currentExpiry = shop.subscription?.expiryDate ? new Date(shop.subscription.expiryDate) : new Date();
-    const baseDate = currentExpiry > new Date() ? currentExpiry : new Date();
-    const nextExpiry = new Date(baseDate.getTime() + extraDays * 24 * 60 * 60 * 1000).toISOString();
+    await runTransaction(db, async (tx) => {
+      const shopRef = doc(db, 'shops', shopId);
+      const snap = await tx.get(shopRef);
+      if (!snap.exists()) throw new Error('Shop not found');
+      const shop = snap.data() as Shop;
+      const now = new Date();
+      const currentExpiry = shop.subscription?.expiryDate ? new Date(shop.subscription.expiryDate) : now;
+      const baseDate = currentExpiry > now ? currentExpiry : now;
+      const nextExpiry = new Date(baseDate.getTime() + extraDays * 24 * 60 * 60 * 1000).toISOString();
+      const nowIso = now.toISOString();
 
-    await updateDoc(doc(db, 'shops', shopId), {
-      'subscription.expiryDate': nextExpiry,
-      'subscription.status': 'active',
-      updatedAt: new Date().toISOString(),
+      tx.update(shopRef, {
+        'subscription.expiryDate': nextExpiry,
+        'subscription.status': 'active',
+        updatedAt: nowIso,
+      });
     });
-    await logPlatformActivity('Extended Subscription', 'shop', shopId, `Extended ${shop.name} by ${extraDays} days`);
+    await logPlatformActivity('Extended Subscription', 'shop', shopId, `Extended shop ${shopId} by ${extraDays} days`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
   }
@@ -560,14 +697,20 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
       'activity_logs',
       'customers',
       'pages',
+      'carts',
+      'wishlists',
     ];
 
     for (const sub of subcollections) {
       const snap = await getDocs(collection(db, 'shops', shopId, sub));
       if (!snap.empty) {
-        const batch = writeBatch(db);
-        snap.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
+        const docs = snap.docs;
+        for (let i = 0; i < docs.length; i += 400) {
+          const chunk = docs.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
       }
     }
 
@@ -577,6 +720,7 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
     if (shop?.ownerId) {
       await deleteDoc(doc(db, 'users', shop.ownerId, 'shopMemberships', shopId)).catch(() => {});
     }
+    await deleteDoc(doc(db, 'shops_public', shopId)).catch(() => {});
     await deleteDoc(doc(db, 'shops', shopId));
     await logPlatformActivity('Deleted Shop', 'shop', shopId, `Permanently removed shop ${shop?.name || shopId}`);
   } catch (err) {
@@ -585,7 +729,7 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
 }
 
 // ====================================================
-// SUBSCRIPTION PAYMENT PROOFS & APPROVALS
+// SUBSCRIPTION PAYMENT PROOFS & TRANSACTIONAL APPROVALS
 // ====================================================
 
 export async function submitSubscriptionPayment(
@@ -636,46 +780,96 @@ export async function getPaymentsByShop(shopId: string): Promise<PlatformPayment
   }
 }
 
+/**
+ * Atomic transactional payment approval: guards against concurrent double approvals,
+ * preserves/extends remaining days when renewing an active plan, and updates shops_public.
+ */
 export async function approvePlatformPayment(paymentId: string): Promise<void> {
+  const reviewer = auth.currentUser?.email || 'Super Admin';
+  const plans = await getSubscriptionPlans();
+
   try {
-    const paySnap = await getDoc(doc(db, 'platform_payments', paymentId));
-    if (!paySnap.exists()) throw new Error('Payment request not found');
-    const payment = paySnap.data() as PlatformPayment;
-    const now = new Date().toISOString();
+    let logMsg = '';
+    await runTransaction(db, async (tx) => {
+      const paymentRef = doc(db, 'platform_payments', paymentId);
+      const paySnap = await tx.get(paymentRef);
+      if (!paySnap.exists()) {
+        throw new Error('Payment request not found');
+      }
+      const payment = paySnap.data() as PlatformPayment;
+      if (payment.status !== 'pending') {
+        throw new Error(`Payment ${paymentId} has already been processed (${payment.status}).`);
+      }
 
-    await updateDoc(doc(db, 'platform_payments', paymentId), {
-      status: 'approved',
-      reviewedBy: auth.currentUser?.email || 'Super Admin',
-      reviewedAt: now,
+      const shopRef = doc(db, 'shops', payment.shopId);
+      const shopPubRef = doc(db, 'shops_public', payment.shopId);
+      const shopSnap = await tx.get(shopRef);
+      if (!shopSnap.exists()) {
+        throw new Error(`Target shop "${payment.shopId}" no longer exists.`);
+      }
+
+      const shopData = shopSnap.data() as Shop;
+      const plan = plans.find((p) => p.id === payment.planId) || DEFAULT_SUBSCRIPTION_PLANS[1];
+      const cycleDays = payment.billingCycle === 'yearly' ? 365 : plan.durationDays || 30;
+      const now = new Date();
+      const nowIso = now.toISOString();
+
+      const currentSub = shopData.subscription;
+      const currentExpiry = currentSub?.expiryDate ? new Date(currentSub.expiryDate) : now;
+      const isRenewSamePlan =
+        currentSub?.planId === payment.planId &&
+        currentSub?.status === 'active' &&
+        currentExpiry > now;
+      const baseTime = isRenewSamePlan ? currentExpiry.getTime() : now.getTime();
+      const nextExpiryIso = new Date(baseTime + cycleDays * 86400000).toISOString();
+
+      tx.update(paymentRef, {
+        status: 'approved',
+        reviewedBy: reviewer,
+        reviewedAt: nowIso,
+      });
+
+      tx.update(shopRef, {
+        status: 'active',
+        subscription: stripUndefined({
+          planId: payment.planId,
+          planName: payment.planName,
+          status: 'active',
+          billingCycle: payment.billingCycle,
+          pricePaid: Number(payment.amount || 0),
+          startDate: isRenewSamePlan && currentSub?.startDate ? currentSub.startDate : nowIso,
+          expiryDate: nextExpiryIso,
+          isFreeOverride: false,
+        }),
+        updatedAt: nowIso,
+      });
+
+      tx.set(shopPubRef, { status: 'active', updatedAt: nowIso }, { merge: true });
+      logMsg = `Approved Rs. ${payment.amount} for ${payment.shopName} (${payment.planName})`;
     });
 
-    await assignShopSubscription(payment.shopId, {
-      planId: payment.planId,
-      billingCycle: payment.billingCycle,
-      durationDays: payment.billingCycle === 'yearly' ? 365 : 30,
-      pricePaid: payment.amount,
-      status: 'active',
-    });
-
-    await logPlatformActivity(
-      'Approved Payment',
-      'payment',
-      paymentId,
-      `Approved Rs. ${payment.amount} for ${payment.shopName} (${payment.planName})`
-    );
+    await logPlatformActivity('Approved Payment', 'payment', paymentId, logMsg);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `platform_payments/${paymentId}`);
   }
 }
 
 export async function rejectPlatformPayment(paymentId: string, reason: string): Promise<void> {
+  const reviewer = auth.currentUser?.email || 'Super Admin';
   try {
-    const now = new Date().toISOString();
-    await updateDoc(doc(db, 'platform_payments', paymentId), {
-      status: 'rejected',
-      rejectionReason: reason || 'Payment verification failed or TID invalid.',
-      reviewedBy: auth.currentUser?.email || 'Super Admin',
-      reviewedAt: now,
+    await runTransaction(db, async (tx) => {
+      const paymentRef = doc(db, 'platform_payments', paymentId);
+      const paySnap = await tx.get(paymentRef);
+      if (!paySnap.exists()) throw new Error('Payment request not found');
+      if (paySnap.data()?.status !== 'pending') {
+        throw new Error(`Payment ${paymentId} has already been processed (${paySnap.data()?.status}).`);
+      }
+      tx.update(paymentRef, {
+        status: 'rejected',
+        rejectionReason: reason || 'Payment verification failed or TID invalid.',
+        reviewedBy: reviewer,
+        reviewedAt: new Date().toISOString(),
+      });
     });
     await logPlatformActivity('Rejected Payment', 'payment', paymentId, `Rejected payment ${paymentId}: ${reason}`);
   } catch (err) {
@@ -776,7 +970,7 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
 
     const sub = s.subscription;
     const plan = planMap.get(sub?.planId || '');
-    const isExpired = sub?.status === 'expired' || (sub?.expiryDate && new Date(sub.expiryDate) < now && sub.status !== 'cancelled');
+    const { isExpired } = getShopSubscriptionStatus(s);
 
     if (isExpired) expiredSubscriptions++;
     if (sub?.status === 'trial') trialShops++;
@@ -805,7 +999,6 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
   const pendingPaymentsCount = payments.filter((p) => p.status === 'pending').length;
   const totalSubscriptionRevenue = approvedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-  // Build last 6 months chart
   const monthlyRegistrationsChart: { label: string; count: number }[] = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);

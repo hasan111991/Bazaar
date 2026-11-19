@@ -14,6 +14,7 @@ import {
   formatPKR,
   isValidPakistaniPhone,
   sanitizeShopSlug,
+  isValidShopSlug,
 } from '../data/seedData';
 import { BillingCycle, PlatformSettings, SubscriptionPlan } from '../types';
 import {
@@ -493,14 +494,19 @@ export const RegisterShopPage: React.FC = () => {
                         />
                       </div>
 
-                      <ImageUploader
-                        shopId={shopSlug || 'pending'}
-                        folder="payments"
-                        images={proofImages}
-                        onChange={setProofImages}
-                        label="Payment Receipt Screenshot"
-                        allowDataUrlFallback
-                      />
+                      {currentUser && isValidShopSlug(sanitizeShopSlug(shopSlug)) ? (
+                        <ImageUploader
+                          shopId={sanitizeShopSlug(shopSlug)}
+                          folder="platform_subscription"
+                          images={proofImages}
+                          onChange={setProofImages}
+                          label="Payment Receipt Screenshot"
+                        />
+                      ) : (
+                        <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                          Sign in with Google above (or finish creating your store first and upload your receipt directly inside Dashboard -&gt; Subscription) so your screenshot is securely stored under your merchant account.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

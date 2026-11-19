@@ -5,7 +5,7 @@ import { useTenant } from './TenantContext';
 import {
   saveShopUserCart,
   loadShopUserCart,
-  getShopSettings,
+  getShopPublicSettings,
   getShopCoupons,
   getShopProducts,
 } from '../services/tenantService';
@@ -72,7 +72,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshSettings = useCallback(async () => {
     try {
-      const s = await getShopSettings(shopId);
+      const s = await getShopPublicSettings(shopId);
       setSettings(s);
       if (s.selfPickupDetails?.enabled === false) {
         setFulfillmentMethod('delivery');

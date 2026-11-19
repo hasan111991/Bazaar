@@ -1,13 +1,40 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Default deny all
+    // 1. Default Deny All
     match /{allPaths=**} {
       allow read, write: if false;
     }
 
     function isSignedIn() {
       return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.super_admin == true ||
+        (request.auth.token.email == 'hasanaamir815@gmail.com' &&
+         request.auth.token.email_verified == true)
+      );
+    }
+
+    // Tenant authorization via Firebase Auth Custom Claims (provisioned by Cloud Functions)
+    function isShopMember(shopId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (request.auth.token.shops != null &&
+         shopId in request.auth.token.shops &&
+         request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin', 'shop_staff'])
+      );
+    }
+
+    function isShopAdmin(shopId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (request.auth.token.shops != null &&
+         shopId in request.auth.token.shops &&
+         request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin'])
+      );
     }
 
     function isValidImageUpload() {
@@ -17,29 +44,76 @@ service firebase.storage {
         request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
     }
 
-    // Tenant asset storage:
-    // shops/{shopId}/logo/{fileName}
-    // shops/{shopId}/products/{productId}/{fileName}
-    // shops/{shopId}/banners/{fileName}
-    // shops/{shopId}/categories/{fileName}
-    // shops/{shopId}/pages/{fileName}
-    // shops/{shopId}/payments/{fileName}  (customer checkout proof or shop subscription receipt)
-    match /shops/{shopId}/{folder}/{allPaths=**} {
+    // ----------------------------------------------------
+    // PUBLIC STOREFRONT ASSETS (Public Read, Strict Tenant Write/Delete)
+    // ----------------------------------------------------
+    match /shops/{shopId}/logo/{allPaths=**} {
       allow read: if true;
-      allow write: if isValidImageUpload() && (
-        // Checkout payment proofs can be uploaded by customers/guests placing orders
-        folder == 'payments' ||
-        // Product/Banner/Category/Logo uploads require authentication
-        (isSignedIn() && folder in ['logo', 'products', 'banners', 'categories', 'pages', 'subscription'])
-      );
-      allow delete: if isSignedIn();
+      allow create, update: if isShopAdmin(shopId) && isValidImageUpload();
+      allow delete: if isShopAdmin(shopId);
     }
 
-    // Platform subscription payment proofs
+    match /shops/{shopId}/products/{productId}/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopMember(shopId);
+    }
+
+    match /shops/{shopId}/banners/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopMember(shopId);
+    }
+
+    match /shops/{shopId}/categories/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopMember(shopId);
+    }
+
+    match /shops/{shopId}/pages/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopMember(shopId);
+    }
+
+    // ----------------------------------------------------
+    // PRIVATE FINANCIAL & SUBSCRIPTION PROOFS (NEVER Public Read)
+    // ----------------------------------------------------
+
+    // Customer Checkout Payment Proofs (Write-once for verified order session; Private Read)
+    match /shops/{shopId}/payments/{orderSessionId}/{fileName} {
+      allow read: if isShopMember(shopId) || (
+        isSignedIn() && resource.metadata.uploaderUid == request.auth.uid
+      );
+      allow create: if isValidImageUpload() &&
+        request.resource.metadata != null &&
+        request.resource.metadata.shopId == shopId &&
+        request.resource.metadata.purpose == 'checkout_payment_proof' &&
+        (isShopMember(shopId) || (isSignedIn() ? request.resource.metadata.uploaderUid == request.auth.uid : request.resource.metadata.uploaderUid == 'guest'));
+      allow update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopAdmin(shopId);
+    }
+
+    // Tenant Subscription Payment Proofs
+    match /shops/{shopId}/subscription/{allPaths=**} {
+      allow read: if isShopAdmin(shopId);
+      allow create, update: if isShopAdmin(shopId) && isValidImageUpload();
+      allow delete: if isShopAdmin(shopId);
+    }
+
+    // Platform-Level Subscription Proofs (Restricted exclusively to Super Admin & submitting Shop Admin)
     match /platform/payments/{shopId}/{fileName} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && isValidImageUpload();
-      allow delete: if isSignedIn();
+      allow read: if isShopAdmin(shopId);
+      allow create, update: if isShopAdmin(shopId) && isValidImageUpload();
+      allow delete: if isSuperAdmin();
+    }
+
+    // User Profile Avatars
+    match /users/{userId}/profile/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidImageUpload();
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
     }
   }
 }

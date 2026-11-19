@@ -318,7 +318,6 @@ export const ShopProductsPage: React.FC = () => {
               multiple
               maxImages={6}
               label="Product Gallery Images (Firebase Storage)"
-              allowDataUrlFallback
             />
 
             <div className="flex items-center gap-6 text-xs pt-2">

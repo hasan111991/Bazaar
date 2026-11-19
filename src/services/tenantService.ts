@@ -39,7 +39,12 @@ import {
   DEFAULT_SHOP_ID,
   DEFAULT_SUBSCRIPTION_PLANS,
 } from '../data/seedData';
-import { stripUndefined } from './platformService';
+import { stripUndefined, getShopSubscriptionStatus } from './platformService';
+import {
+  generateTrackingToken,
+  deriveTrackingTokenHash,
+  deriveTrackingDocId,
+} from '../utils/trackingCrypto';
 
 // ====================================================
 // PLAN LIMIT & SUBSCRIPTION ENFORCEMENT HELPERS
@@ -61,10 +66,7 @@ export async function getShopAndPlanLimits(shopId: string) {
     ? (plansSnap.data() as any)
     : DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === shop.subscription?.planId) || DEFAULT_SUBSCRIPTION_PLANS[0];
 
-  const isSuspended = shop.status === 'suspended' || shop.status === 'inactive';
-  const isExpired =
-    shop.subscription?.status === 'expired' ||
-    (Boolean(shop.subscription?.expiryDate) && new Date(shop.subscription.expiryDate) < new Date());
+  const { isSuspended, isExpired } = getShopSubscriptionStatus(shop);
 
   return { shop, plan, isSuspended, isExpired };
 }
@@ -302,6 +304,13 @@ export async function getShopBanners(shopId: string = DEFAULT_SHOP_ID, includeIn
 }
 
 export async function saveShopBanner(shopId: string, banner: Partial<Banner>): Promise<string> {
+  const { plan, isExpired, isSuspended } = await getShopAndPlanLimits(shopId);
+  if (isSuspended || isExpired) {
+    throw new Error('Subscription expired or store suspended. Renew your plan to update banners.');
+  }
+  if (plan && plan.features && plan.features.banners === false) {
+    throw new Error('Promotional banners are not enabled on your current plan.');
+  }
   const id = banner.id || `ban_${Date.now()}`;
   const payload = stripUndefined<Banner>({
     id,
@@ -331,7 +340,7 @@ export async function deleteShopBanner(shopId: string, id: string): Promise<void
 }
 
 // ====================================================
-// ORDERS & TRACKING
+// ORDERS & TOKENIZED NON-PII TRACKING
 // ====================================================
 
 export async function createShopOrder(
@@ -363,12 +372,16 @@ export async function createShopOrder(
   const orderNumber = `PK-${Math.floor(100000 + Math.random() * 900000)}`;
   const id = `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   const now = new Date().toISOString();
+  const trackingToken = generateTrackingToken();
+  const trackingTokenHash = await deriveTrackingTokenHash(orderNumber, trackingToken);
+  const trackDocId = `trk_${trackingTokenHash.slice(0, 32)}`;
 
   const fullOrder = stripUndefined<Order>({
     ...orderData,
     id,
     shopId,
     orderNumber,
+    trackingTokenHash,
     userId: effectiveUserId,
     paymentStatus: 'pending',
     orderStatus: 'Pending',
@@ -376,15 +389,19 @@ export async function createShopOrder(
     updatedAt: now,
   });
 
+  // Strict non-PII tracking projection matching isValidOrderTracking() in firestore.rules
+  const safeFirstName = (fullOrder.customer.name || 'Customer').trim().split(/\s+/)[0] || 'Customer';
   const trackingDoc = stripUndefined({
     orderNumber,
     orderId: id,
+    shopId,
+    trackingTokenHash,
     orderStatus: 'Pending',
     fulfillmentMethod: fullOrder.fulfillmentMethod || 'delivery',
     pickupDetails: fullOrder.pickupDetails,
     paymentMethod: fullOrder.paymentMethod,
     paymentStatus: 'pending',
-    customerName: fullOrder.customer.name,
+    customerName: safeFirstName,
     city: fullOrder.customer.city,
     items: fullOrder.items.map((it) => ({
       productId: it.productId,
@@ -401,20 +418,20 @@ export async function createShopOrder(
   try {
     const batch = writeBatch(db);
     batch.set(doc(db, 'shops', shopId, 'orders', id), fullOrder);
-    batch.set(doc(db, 'shops', shopId, 'order_tracking', orderNumber), trackingDoc);
-    // Notify merchant
+    batch.set(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackingDoc);
+
     const notifId = `ntf_${Date.now()}`;
     batch.set(doc(db, 'shops', shopId, 'notifications', notifId), {
       id: notifId,
       title: `New Order ${orderNumber}`,
-      message: `${fullOrder.customer.name} placed a Rs. ${fullOrder.total.toLocaleString()} order via ${fullOrder.paymentMethod.toUpperCase()}`,
+      message: `${safeFirstName} placed a Rs. ${fullOrder.total.toLocaleString()} order via ${fullOrder.paymentMethod.toUpperCase()}`,
       type: 'order',
       isRead: false,
       link: '/dashboard/orders',
       createdAt: now,
     });
     await batch.commit();
-    return fullOrder;
+    return { ...fullOrder, trackingToken };
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/orders/${id}`);
   }
@@ -453,76 +470,56 @@ export async function updateShopOrderStatus(
   const cleanUpdates = stripUndefined({ ...updates, updatedAt: now });
 
   try {
-    await updateDoc(doc(db, 'shops', shopId, 'orders', orderId), cleanUpdates);
+    const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
+    await updateDoc(orderRef, cleanUpdates);
 
-    let resolvedOrderNumber = orderNumber;
-    if (!resolvedOrderNumber) {
-      const ordSnap = await getDoc(doc(db, 'shops', shopId, 'orders', orderId));
-      if (ordSnap.exists()) {
-        resolvedOrderNumber = ordSnap.data().orderNumber;
+    const ordSnap = await getDoc(orderRef).catch(() => null);
+    const ordData = ordSnap?.exists() ? (ordSnap.data() as Order) : null;
+    const resolvedOrderNumber = orderNumber || ordData?.orderNumber;
+    const trackingHash = ordData?.trackingTokenHash;
+
+    const trackUpdates = stripUndefined({
+      orderStatus: updates.orderStatus,
+      paymentStatus: updates.paymentStatus,
+      courierName: updates.courierName,
+      trackingNumber: updates.trackingNumber,
+      updatedAt: now,
+    });
+
+    if (Object.keys(trackUpdates).length > 1) {
+      if (trackingHash) {
+        const trackDocId = `trk_${trackingHash.slice(0, 32)}`;
+        await updateDoc(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackUpdates).catch(() => {});
       }
-    }
-
-    if (resolvedOrderNumber) {
-      const trackUpdates = stripUndefined({
-        orderStatus: updates.orderStatus,
-        paymentStatus: updates.paymentStatus,
-        courierName: updates.courierName,
-        trackingNumber: updates.trackingNumber,
-        updatedAt: now,
-      });
-      if (Object.keys(trackUpdates).length > 1) {
+      if (resolvedOrderNumber) {
         await updateDoc(doc(db, 'shops', shopId, 'order_tracking', resolvedOrderNumber), trackUpdates).catch(() => {});
       }
     }
-    await logShopActivity(shopId, 'Updated Order', 'order', orderId, `Order ${resolvedOrderNumber || orderId} -> ${updates.orderStatus || updates.paymentStatus}`);
+
+    await logShopActivity(
+      shopId,
+      'Updated Order',
+      'order',
+      orderId,
+      `Order ${resolvedOrderNumber || orderId} -> ${updates.orderStatus || updates.paymentStatus}`
+    );
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/orders/${orderId}`);
   }
 }
 
-export async function trackShopOrder(shopId: string, ref: string): Promise<Order | null> {
+/**
+ * Verifies tokenized non-PII parcel tracking for guests or authenticated user own orders.
+ * Never exposes customer email, phone, street address, or payment proof via tracking documents.
+ */
+export async function trackShopOrder(shopId: string, ref: string, token?: string): Promise<Order | null> {
   const trimmed = ref.trim();
   if (!trimmed) return null;
 
   const upperRef = trimmed.toUpperCase();
-  if (/^PK-[A-Z0-9]+$/.test(upperRef)) {
-    try {
-      const trackSnap = await getDoc(doc(db, 'shops', shopId, 'order_tracking', upperRef));
-      if (trackSnap.exists()) {
-        const td = trackSnap.data();
-        return {
-          id: td.orderId || upperRef,
-          shopId,
-          orderNumber: td.orderNumber,
-          userId: 'tracking',
-          customer: {
-            name: td.customerName || 'Customer',
-            email: '',
-            phone: '',
-            address: '',
-            city: td.city || 'Pakistan',
-            postalCode: '',
-          },
-          items: td.items || [],
-          subtotal: td.total || 0,
-          shippingFee: 0,
-          discount: 0,
-          total: td.total || 0,
-          fulfillmentMethod: td.fulfillmentMethod || 'delivery',
-          pickupDetails: td.pickupDetails,
-          paymentMethod: td.paymentMethod || 'cod',
-          paymentStatus: td.paymentStatus || 'pending',
-          orderStatus: td.orderStatus || 'Pending',
-          courierName: td.courierName,
-          trackingNumber: td.trackingNumber,
-          createdAt: td.createdAt,
-          updatedAt: td.updatedAt,
-        };
-      }
-    } catch {}
-  }
+  const cleanToken = (token || '').trim();
 
+  // 1. Authenticated user lookup within their own orders
   if (auth.currentUser?.uid) {
     try {
       const userOrders = await getShopOrdersByUser(shopId, auth.currentUser.uid);
@@ -536,35 +533,115 @@ export async function trackShopOrder(shopId: string, ref: string): Promise<Order
     } catch {}
   }
 
-  try {
-    const res = await fetch(`/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(trimmed)}`);
-    const contentType = res.headers.get('content-type') || '';
-    if (res.ok && contentType.includes('application/json')) {
-      return (await res.json()) as Order;
-    }
-  } catch {}
+  // 2. Tokenized guest lookup requires BOTH orderNumber AND secret trackingToken
+  if (/^PK-[A-Z0-9]+$/.test(upperRef) && cleanToken) {
+    try {
+      const expectedHash = await deriveTrackingTokenHash(upperRef, cleanToken);
+      const trackDocId = await deriveTrackingDocId(upperRef, cleanToken);
+      const trackSnap = await getDoc(doc(db, 'shops', shopId, 'order_tracking', trackDocId));
+      if (trackSnap.exists()) {
+        const td = trackSnap.data();
+        if (td.orderNumber === upperRef && td.trackingTokenHash === expectedHash) {
+          return {
+            id: td.orderId || upperRef,
+            shopId,
+            orderNumber: td.orderNumber,
+            userId: 'tracking',
+            customer: {
+              name: td.customerName || 'Customer',
+              email: '',
+              phone: '',
+              address: '',
+              city: td.city || 'Pakistan',
+              postalCode: '',
+            },
+            items: td.items || [],
+            subtotal: td.total || 0,
+            shippingFee: 0,
+            discount: 0,
+            total: td.total || 0,
+            fulfillmentMethod: td.fulfillmentMethod || 'delivery',
+            pickupDetails: td.pickupDetails,
+            paymentMethod: td.paymentMethod || 'cod',
+            paymentStatus: td.paymentStatus || 'pending',
+            orderStatus: td.orderStatus || 'Pending',
+            courierName: td.courierName,
+            trackingNumber: td.trackingNumber,
+            createdAt: td.createdAt,
+            updatedAt: td.updatedAt,
+          };
+        }
+      }
+    } catch {}
+
+    // Server backend fallback if running Node API
+    try {
+      const res = await fetch(
+        `/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(upperRef)}&token=${encodeURIComponent(cleanToken)}`
+      );
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        return (await res.json()) as Order;
+      }
+    } catch {}
+  }
 
   return null;
 }
 
 // ====================================================
-// SETTINGS & APPEARANCE & CMS PAGES
+// SETTINGS (PUBLIC vs PRIVATE SPLIT) & CMS PAGES
 // ====================================================
 
+function normalizeStoreSettings(data: Partial<StoreSettings>): StoreSettings {
+  return {
+    ...INITIAL_SETTINGS,
+    ...data,
+    bankDetails: { ...INITIAL_SETTINGS.bankDetails, ...(data.bankDetails || {}) },
+    easypaisaDetails: { ...INITIAL_SETTINGS.easypaisaDetails, ...(data.easypaisaDetails || {}) },
+    jazzcashDetails: { ...INITIAL_SETTINGS.jazzcashDetails, ...(data.jazzcashDetails || {}) },
+    selfPickupDetails: { ...INITIAL_SETTINGS.selfPickupDetails, ...(data.selfPickupDetails || {}) },
+    socialLinks: { ...INITIAL_SETTINGS.socialLinks, ...(data.socialLinks || {}) },
+  };
+}
+
+/**
+ * Public-safe storefront settings getter: reads ONLY shops/{shopId}/settings/public.
+ */
+export async function getShopPublicSettings(shopId: string = DEFAULT_SHOP_ID): Promise<StoreSettings> {
+  try {
+    const pubSnap = await getDoc(doc(db, 'shops', shopId, 'settings', 'public'));
+    if (pubSnap.exists()) {
+      return normalizeStoreSettings(pubSnap.data() as Partial<StoreSettings>);
+    }
+    return INITIAL_SETTINGS;
+  } catch {
+    return INITIAL_SETTINGS;
+  }
+}
+
+/**
+ * Authenticated Shop Admin settings getter: merges settings/public + settings/private
+ * (with fallback to legacy settings/general for older docs).
+ */
 export async function getShopSettings(shopId: string = DEFAULT_SHOP_ID): Promise<StoreSettings> {
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId, 'settings', 'general'));
-    if (snap.exists()) {
-      const data = snap.data() as Partial<StoreSettings>;
-      return {
-        ...INITIAL_SETTINGS,
-        ...data,
-        bankDetails: { ...INITIAL_SETTINGS.bankDetails, ...(data.bankDetails || {}) },
-        easypaisaDetails: { ...INITIAL_SETTINGS.easypaisaDetails, ...(data.easypaisaDetails || {}) },
-        jazzcashDetails: { ...INITIAL_SETTINGS.jazzcashDetails, ...(data.jazzcashDetails || {}) },
-        selfPickupDetails: { ...INITIAL_SETTINGS.selfPickupDetails, ...(data.selfPickupDetails || {}) },
-        socialLinks: { ...INITIAL_SETTINGS.socialLinks, ...(data.socialLinks || {}) },
+    const [pubSnap, privSnap] = await Promise.all([
+      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+      getDoc(doc(db, 'shops', shopId, 'settings', 'private')).catch(() => null),
+    ]);
+
+    if (pubSnap?.exists() || privSnap?.exists()) {
+      const merged: Partial<StoreSettings> = {
+        ...(pubSnap?.exists() ? pubSnap.data() : {}),
+        ...(privSnap?.exists() ? privSnap.data() : {}),
       };
+      return normalizeStoreSettings(merged);
+    }
+
+    const genSnap = await getDoc(doc(db, 'shops', shopId, 'settings', 'general')).catch(() => null);
+    if (genSnap && genSnap.exists()) {
+      return normalizeStoreSettings(genSnap.data() as Partial<StoreSettings>);
     }
     return INITIAL_SETTINGS;
   } catch {
@@ -573,21 +650,81 @@ export async function getShopSettings(shopId: string = DEFAULT_SHOP_ID): Promise
 }
 
 export async function updateShopSettings(shopId: string, settings: StoreSettings): Promise<void> {
+  const nowIso = new Date().toISOString();
+
+  const publicSettingsPayload = stripUndefined({
+    siteName: settings.siteName,
+    logoUrl: settings.logoUrl || '',
+    primaryColor: settings.primaryColor || '#065f46',
+    accentColor: settings.accentColor || '#d97706',
+    announcement: settings.announcement,
+    contactPhone: settings.contactPhone,
+    whatsappNumber: settings.whatsappNumber,
+    contactEmail: settings.contactEmail,
+    address: settings.address,
+    city: settings.city,
+    shippingFee: Number(settings.shippingFee) || 0,
+    freeShippingThreshold: Number(settings.freeShippingThreshold) || 0,
+    currency: settings.currency || 'PKR',
+    currencySymbol: settings.currencySymbol || 'Rs.',
+    aboutUs: settings.aboutUs,
+    selfPickupDetails: settings.selfPickupDetails,
+    socialLinks: settings.socialLinks,
+    // Buyer checkout transfer details ONLY exposed on public doc when enabled by merchant
+    easypaisaDetails: settings.easypaisaDetails?.enabled
+      ? settings.easypaisaDetails
+      : { enabled: false, accountTitle: '', accountNumber: '' },
+    jazzcashDetails: settings.jazzcashDetails?.enabled
+      ? settings.jazzcashDetails
+      : { enabled: false, accountTitle: '', accountNumber: '' },
+    bankDetails: settings.bankDetails,
+    updatedAt: nowIso,
+  });
+
+  const privateSettingsPayload = stripUndefined({
+    bankDetails: settings.bankDetails,
+    easypaisaDetails: settings.easypaisaDetails,
+    jazzcashDetails: settings.jazzcashDetails,
+    updatedAt: nowIso,
+  });
+
   try {
-    await setDoc(doc(db, 'shops', shopId, 'settings', 'general'), stripUndefined(settings));
-    // Also mirror logoUrl / name / city onto master shop doc cleanly if changed
-    await updateDoc(doc(db, 'shops', shopId), stripUndefined({
-      name: settings.siteName,
-      logoUrl: settings.logoUrl || '',
-      city: settings.city,
-      address: settings.address,
-      'theme.primaryColor': settings.primaryColor || '#065f46',
-      'theme.accentColor': settings.accentColor || '#d97706',
-      updatedAt: new Date().toISOString(),
-    })).catch(() => {});
-    await logShopActivity(shopId, 'Updated Settings', 'settings', 'general', `Updated settings for ${settings.siteName}`);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'shops', shopId, 'settings', 'public'), publicSettingsPayload);
+    batch.set(doc(db, 'shops', shopId, 'settings', 'private'), privateSettingsPayload, { merge: true });
+    batch.update(
+      doc(db, 'shops', shopId),
+      stripUndefined({
+        name: settings.siteName,
+        logoUrl: settings.logoUrl || '',
+        city: settings.city,
+        address: settings.address,
+        'theme.primaryColor': settings.primaryColor || '#065f46',
+        'theme.accentColor': settings.accentColor || '#d97706',
+        updatedAt: nowIso,
+      })
+    );
+    batch.set(
+      doc(db, 'shops_public', shopId),
+      stripUndefined({
+        id: shopId,
+        slug: shopId,
+        name: settings.siteName,
+        logoUrl: settings.logoUrl || '',
+        city: settings.city || '',
+        publicContactPhone: settings.contactPhone || '',
+        publicSupportEmail: settings.contactEmail || '',
+        storefrontAddress: settings.address || '',
+        'theme.primaryColor': settings.primaryColor || '#065f46',
+        'theme.accentColor': settings.accentColor || '#d97706',
+        updatedAt: nowIso,
+      }),
+      { merge: true }
+    );
+    await batch.commit();
+    await logShopActivity(shopId, 'Updated Settings', 'settings', 'public', `Updated settings for ${settings.siteName}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/settings/general`);
+    handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/settings/public`);
   }
 }
 
@@ -601,6 +738,13 @@ export async function getShopPageContent(shopId: string, key: ShopPageContent['k
 }
 
 export async function saveShopPageContent(shopId: string, page: ShopPageContent): Promise<void> {
+  const { plan, isExpired, isSuspended } = await getShopAndPlanLimits(shopId);
+  if (isSuspended || isExpired) {
+    throw new Error('Subscription expired or suspended. Renew your plan to edit storefront CMS pages.');
+  }
+  if (plan && plan.features && plan.features.customPages === false) {
+    throw new Error('Custom CMS pages are not enabled on your current plan.');
+  }
   try {
     await setDoc(doc(db, 'shops', shopId, 'pages', page.key), stripUndefined(page));
   } catch (err) {
@@ -624,7 +768,10 @@ export async function getShopCoupons(shopId: string = DEFAULT_SHOP_ID): Promise<
 }
 
 export async function saveShopCoupon(shopId: string, coupon: Partial<Coupon>): Promise<string> {
-  const { plan } = await getShopAndPlanLimits(shopId);
+  const { plan, isExpired, isSuspended } = await getShopAndPlanLimits(shopId);
+  if (isSuspended || isExpired) {
+    throw new Error('Subscription expired or store suspended. Renew your plan to manage coupons.');
+  }
   if (!plan?.features?.coupons) {
     throw new Error('Discount coupons are available on Growth & Enterprise plans. Upgrade your subscription to unlock coupons.');
   }
@@ -901,7 +1048,13 @@ export async function inviteShopStaff(
     permissions: StaffPermission[];
   }
 ): Promise<string> {
-  const { plan } = await getShopAndPlanLimits(shopId);
+  const { plan, isExpired, isSuspended } = await getShopAndPlanLimits(shopId);
+  if (isSuspended || isExpired) {
+    throw new Error('Subscription expired or store suspended. Renew your plan to invite staff.');
+  }
+  if (plan && plan.features && plan.features.staffAccounts === false) {
+    throw new Error('Team staff accounts require Growth or Enterprise plan.');
+  }
   const current = await getShopStaff(shopId);
   const totalHeadcount = current.staff.length + current.invites.length;
   if (totalHeadcount >= (plan?.maxStaff || 1)) {

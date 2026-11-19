@@ -293,11 +293,10 @@ export const ShopSubscriptionPage: React.FC = () => {
 
             <ImageUploader
               shopId={shopId}
-              folder="payments"
+              folder="platform_subscription"
               images={proofImages}
               onChange={setProofImages}
               label="Upload Payment Screenshot Proof *"
-              allowDataUrlFallback
             />
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">

@@ -83,6 +83,9 @@ export const CheckoutPage: React.FC = () => {
   const [paymentProofImage, setPaymentProofImage] = useState<string>('');
   const [paymentProofFileName, setPaymentProofFileName] = useState<string>('');
   const [uploadingProof, setUploadingProof] = useState(false);
+  const [checkoutSessionId] = useState(
+    () => `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  );
   const [cardHolder, setCardHolder] = useState('');
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
@@ -103,15 +106,15 @@ export const CheckoutPage: React.FC = () => {
       const uploaded = await uploadShopImage(file, {
         shopId,
         folder: 'payments',
+        subPath: checkoutSessionId,
         maxDimension: 1200,
-        allowDataUrlFallback: true,
       });
       setPaymentProofImage(uploaded.url);
       setPaymentProofFileName(file.name);
       showToast('Payment proof image uploaded!', 'success');
     } catch (err: any) {
       showToast(err.message || 'Could not upload payment proof', 'error');
-      setErrorMessage(err.message || 'Could not process selected payment proof image.');
+      setErrorMessage(err.message || 'Could not upload payment proof image.');
     } finally {
       setUploadingProof(false);
       e.target.value = '';
@@ -1279,10 +1282,14 @@ export const CheckoutPage: React.FC = () => {
             {/* Place Order CTA */}
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || uploadingProof}
               className="w-full py-3.5 sm:py-4 px-4 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-extrabold text-sm shadow-xl flex items-center justify-center gap-2 transition disabled:opacity-60"
             >
-              {isSubmitting ? (
+              {uploadingProof ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Uploading Proof Image...
+                </>
+              ) : isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" /> Placing Order...
                 </>

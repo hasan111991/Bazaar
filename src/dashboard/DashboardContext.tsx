@@ -16,7 +16,7 @@ import {
   INITIAL_SETTINGS,
   DEFAULT_SHOP_ID,
 } from '../data/seedData';
-import { getShopById, getSubscriptionPlans } from '../services/platformService';
+import { getShopById, getSubscriptionPlans, getShopSubscriptionStatus } from '../services/platformService';
 import { getShopSettings } from '../services/tenantService';
 
 interface DashboardContextType {
@@ -98,10 +98,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     loadWorkspace();
   }, [loadWorkspace]);
 
-  const isSuspended = shop ? shop.status === 'suspended' || shop.status === 'inactive' : false;
-  const isExpired = shop?.subscription?.expiryDate
-    ? shop.subscription.status === 'expired' || new Date(shop.subscription.expiryDate) < new Date()
-    : false;
+  const { isSuspended, isExpired } = getShopSubscriptionStatus(shop);
 
   const hasPermission = (perm: StaffPermission): boolean => {
     if (isInspecting || isSuperAdmin || userRole === 'shop_owner' || userRole === 'shop_admin') {
@@ -111,6 +108,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const canUseFeature = (feat: keyof PlanFeatures): boolean => {
+    if (isSuspended || isExpired) return false;
     return Boolean(plan?.features?.[feat]);
   };
 

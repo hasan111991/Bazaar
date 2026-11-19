@@ -41,6 +41,7 @@ export interface UserProfile {
   email: string;
   displayName: string;
   phoneNumber?: string;
+  photoURL?: string;
   role: UserRole;
   isBlocked?: boolean;
   addresses: UserAddress[];
@@ -127,6 +128,21 @@ export interface Shop {
   theme?: ShopTheme;
   lastActivityAt?: string;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ShopPublic {
+  id: string;
+  slug: string;
+  name: string;
+  logoUrl?: string;
+  city?: string;
+  publicContactPhone?: string;
+  publicSupportEmail?: string;
+  storefrontAddress?: string;
+  status: ShopStatus;
+  theme?: ShopTheme;
+  createdAt?: string;
   updatedAt?: string;
 }
 
@@ -231,6 +247,7 @@ export interface ShopPageContent {
   key: 'about' | 'faq' | 'return-policy' | 'terms' | 'privacy';
   title: string;
   content: string;
+  imageUrl?: string;
   updatedAt: string;
 }
 
@@ -336,6 +353,8 @@ export interface Order {
   id: string;
   shopId?: string;
   orderNumber: string;
+  trackingToken?: string;
+  trackingTokenHash?: string;
   userId: string;
   customer: CustomerDetails;
   items: OrderItem[];
@@ -364,6 +383,7 @@ export interface OrderTrackingPublic {
   orderNumber: string;
   orderId: string;
   shopId?: string;
+  trackingTokenHash?: string;
   orderStatus: OrderStatus;
   fulfillmentMethod?: FulfillmentMethod;
   pickupDetails?: OrderPickupDetails;
@@ -507,6 +527,9 @@ export interface MigrationResult {
     contactMessages: number;
     settings: number;
   };
+  skippedRecords: Record<string, number>;
+  failedRecords: { collection: string; id: string; error: string }[];
+  verifiedCounts: Record<string, { expectedMin: number; actual: number; matched: boolean }>;
   skippedCollections: string[];
   errors: string[];
   backupJson: string;

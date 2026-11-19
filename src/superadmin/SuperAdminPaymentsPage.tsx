@@ -20,6 +20,8 @@ export const SuperAdminPaymentsPage: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSavedMsg, setSettingsSavedMsg] = useState(false);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -50,6 +52,36 @@ export const SuperAdminPaymentsPage: React.FC = () => {
     }
   };
 
+  const handleApprove = async (paymentId: string) => {
+    if (processingId) return;
+    setProcessingId(paymentId);
+    setActionError(null);
+    try {
+      await approvePlatformPayment(paymentId);
+      await loadData();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not approve payment.');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectTarget || processingId) return;
+    setProcessingId(rejectTarget.id);
+    setActionError(null);
+    try {
+      await rejectPlatformPayment(rejectTarget.id, rejectReason);
+      setRejectTarget(null);
+      setRejectReason('');
+      await loadData();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not reject payment.');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div>
@@ -76,6 +108,12 @@ export const SuperAdminPaymentsPage: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {actionError && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+          {actionError}
+        </div>
+      )}
 
       {/* Payments Queue */}
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
@@ -134,15 +172,18 @@ export const SuperAdminPaymentsPage: React.FC = () => {
                     <>
                       <button
                         type="button"
-                        onClick={() => approvePlatformPayment(p.id).then(loadData)}
-                        className="px-3.5 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-lg font-bold flex items-center gap-1"
+                        disabled={processingId === p.id}
+                        onClick={() => handleApprove(p.id)}
+                        className="px-3.5 py-2 bg-[#065F46] hover:bg-emerald-900 disabled:opacity-50 text-white rounded-lg font-bold flex items-center gap-1"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Approve &amp; Activate
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {processingId === p.id ? 'Processing...' : 'Approve & Activate'}
                       </button>
                       <button
                         type="button"
+                        disabled={processingId === p.id}
                         onClick={() => setRejectTarget(p)}
-                        className="px-3.5 py-2 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg font-bold flex items-center gap-1"
+                        className="px-3.5 py-2 border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 rounded-lg font-bold flex items-center gap-1"
                       >
                         <XCircle className="w-3.5 h-3.5" /> Reject
                       </button>
@@ -282,16 +323,11 @@ export const SuperAdminPaymentsPage: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  rejectPlatformPayment(rejectTarget.id, rejectReason).then(() => {
-                    setRejectTarget(null);
-                    setRejectReason('');
-                    loadData();
-                  });
-                }}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-bold"
+                disabled={processingId === rejectTarget.id}
+                onClick={handleReject}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-bold disabled:opacity-50"
               >
-                Confirm Reject
+                {processingId === rejectTarget.id ? 'Rejecting...' : 'Confirm Reject'}
               </button>
             </div>
           </div>

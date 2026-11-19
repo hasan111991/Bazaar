@@ -89,12 +89,16 @@ export async function updateOrderStatus(
   return tenant.updateShopOrderStatus(shopId, orderId, updates, orderNumber);
 }
 
-export async function trackOrder(ref: string, shopId: string = DEFAULT_SHOP_ID): Promise<Order | null> {
-  return tenant.trackShopOrder(shopId, ref);
+export async function trackOrder(
+  ref: string,
+  shopId: string = DEFAULT_SHOP_ID,
+  token?: string
+): Promise<Order | null> {
+  return tenant.trackShopOrder(shopId, ref, token);
 }
 
 export async function getStoreSettings(shopId: string = DEFAULT_SHOP_ID): Promise<StoreSettings> {
-  return tenant.getShopSettings(shopId);
+  return tenant.getShopPublicSettings(shopId);
 }
 
 export async function updateStoreSettings(settings: StoreSettings, shopId: string = DEFAULT_SHOP_ID): Promise<void> {

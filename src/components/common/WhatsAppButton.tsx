@@ -9,13 +9,12 @@ export const WhatsAppButton: React.FC = () => {
 
   const phone = settings.whatsappNumber ? settings.whatsappNumber.replace(/[^0-9]/g, '') : '923001234567';
 
-  const sendWhatsApp = (msgText?: string) => {
+  const buildWhatsAppUrl = (msgText?: string) => {
     const text = encodeURIComponent(
       msgText ||
         `Assalam-o-Alaikum ${settings.siteName} Support, I would like to inquire about placing an order or tracking my delivery.`
     );
-    window.open(`https://wa.me/${phone}?text=${text}`, '_blank', 'noopener,noreferrer');
-    setIsOpen(false);
+    return `https://wa.me/${phone}?text=${text}`;
   };
 
   return (
@@ -52,27 +51,33 @@ export const WhatsAppButton: React.FC = () => {
             </div>
 
             <div className="space-y-1.5">
-              <button
-                type="button"
-                onClick={() => sendWhatsApp('Salam! I need help with my recent order delivery.')}
-                className="w-full text-left text-xs bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 p-2 rounded-lg text-slate-700 transition"
+              <a
+                href={buildWhatsAppUrl('Salam! I need help with my recent order delivery.')}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setIsOpen(false)}
+                className="block w-full text-left text-xs bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 p-2 rounded-lg text-slate-700 transition"
               >
                 Inquire about order status & courier tracking
-              </button>
-              <button
-                type="button"
-                onClick={() => sendWhatsApp('Salam! I have a question about size and product availability.')}
-                className="w-full text-left text-xs bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 p-2 rounded-lg text-slate-700 transition"
+              </a>
+              <a
+                href={buildWhatsAppUrl('Salam! I have a question about size and product availability.')}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setIsOpen(false)}
+                className="block w-full text-left text-xs bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 p-2 rounded-lg text-slate-700 transition"
               >
                 Product availability & specifications
-              </button>
-              <button
-                type="button"
-                onClick={() => sendWhatsApp('Salam! I want to pay via EasyPaisa, JazzCash, or Bank Transfer.')}
-                className="w-full text-left text-xs bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 p-2 rounded-lg text-slate-700 transition"
+              </a>
+              <a
+                href={buildWhatsAppUrl('Salam! I want to pay via EasyPaisa, JazzCash, or Bank Transfer.')}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setIsOpen(false)}
+                className="block w-full text-left text-xs bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 p-2 rounded-lg text-slate-700 transition"
               >
                 EasyPaisa, JazzCash & Bank Transfer help
-              </button>
+              </a>
             </div>
 
             <div className="flex gap-2 pt-1">
@@ -81,18 +86,18 @@ export const WhatsAppButton: React.FC = () => {
                 placeholder="Type your question..."
                 value={customMsg}
                 onChange={(e) => setCustomMsg(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') sendWhatsApp(customMsg);
-                }}
                 className="flex-1 min-w-0 text-xs px-3 py-2 bg-white rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-[#25D366]"
               />
-              <button
-                onClick={() => sendWhatsApp(customMsg)}
-                className="p-2 bg-[#25D366] hover:bg-[#1ebd5b] text-white rounded-xl transition shadow-xs shrink-0"
+              <a
+                href={buildWhatsAppUrl(customMsg)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setIsOpen(false)}
+                className="p-2 bg-[#25D366] hover:bg-[#1ebd5b] text-white rounded-xl transition shadow-xs shrink-0 flex items-center justify-center"
                 aria-label="Send WhatsApp Message"
               >
                 <Send className="w-4 h-4" />
-              </button>
+              </a>
             </div>
           </div>
         </div>

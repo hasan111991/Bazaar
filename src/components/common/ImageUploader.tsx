@@ -1,10 +1,15 @@
 import React, { useRef, useState } from 'react';
 import { UploadCloud, X, ArrowLeft, ArrowRight, Link as LinkIcon, Loader2, Image as ImageIcon } from 'lucide-react';
-import { uploadShopImage, deleteStorageImageByUrl, StorageFolder } from '../../services/storageService';
+import {
+  uploadShopImage,
+  uploadPlatformSubscriptionProof,
+  deleteStorageImageByUrl,
+  StorageFolder,
+} from '../../services/storageService';
 
 interface ImageUploaderProps {
   shopId: string;
-  folder: StorageFolder;
+  folder: StorageFolder | 'platform_subscription';
   subPath?: string;
   images: string[];
   onChange: (nextImages: string[]) => void;
@@ -12,7 +17,6 @@ interface ImageUploaderProps {
   maxImages?: number;
   label?: string;
   helperText?: string;
-  allowDataUrlFallback?: boolean;
 }
 
 export const ImageUploader: React.FC<ImageUploaderProps> = ({
@@ -24,8 +28,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   multiple = false,
   maxImages = 6,
   label = 'Upload Image',
-  helperText = 'JPG, PNG, or WebP up to 5 MB (auto-compressed for fast loading)',
-  allowDataUrlFallback = false,
+  helperText = 'JPG, PNG, WebP, or GIF up to 5 MB (uploaded directly to Firebase Storage)',
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -54,29 +57,41 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
 
     try {
       for (let i = 0; i < filesToUpload.length; i++) {
-        const res = await uploadShopImage(filesToUpload[i], {
-          shopId,
-          folder,
-          subPath,
-          allowDataUrlFallback,
-          onProgress: (pct) => {
-            const overall = Math.round(((i + pct / 100) / filesToUpload.length) * 100);
-            setProgress(overall);
-          },
-        });
+        const res =
+          folder === 'platform_subscription'
+            ? await uploadPlatformSubscriptionProof(shopId, filesToUpload[i], (pct) => {
+                const overall = Math.round(((i + pct / 100) / filesToUpload.length) * 100);
+                setProgress(overall);
+              })
+            : await uploadShopImage(filesToUpload[i], {
+                shopId,
+                folder,
+                subPath,
+                onProgress: (pct) => {
+                  const overall = Math.round(((i + pct / 100) / filesToUpload.length) * 100);
+                  setProgress(overall);
+                },
+              });
         uploadedUrls.push(res.url);
       }
+
+      if (uploadedUrls.length === 0) return;
 
       if (multiple) {
         onChange([...images, ...uploadedUrls]);
       } else {
+        // Delete previous storage object only after new upload succeeds
         if (images[0] && images[0] !== uploadedUrls[0]) {
           deleteStorageImageByUrl(images[0], shopId).catch(() => {});
         }
         onChange(uploadedUrls.slice(0, 1));
       }
     } catch (err: any) {
-      setError(err?.message || 'Image upload failed');
+      // Preserve existing images array untouched when upload fails
+      if (uploadedUrls.length > 0 && multiple) {
+        onChange([...images, ...uploadedUrls]);
+      }
+      setError(err?.message || 'Image upload failed. Existing images were preserved.');
     } finally {
       setUploading(false);
       setProgress(0);

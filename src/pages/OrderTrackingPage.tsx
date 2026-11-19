@@ -1,35 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Truck, Search, CheckCircle2, AlertCircle, ExternalLink, Store, Clock, Phone } from 'lucide-react';
+import { Truck, Search, CheckCircle2, AlertCircle, ExternalLink, Store, Clock, Phone, KeyRound } from 'lucide-react';
 import { Order } from '../types';
 import { formatPKR, COURIERS, FALLBACK_PRODUCT_IMAGE, getPaymentMethodLabel, getFulfillmentLabel } from '../data/seedData';
 import { trackShopOrder } from '../services/tenantService';
 import { useTenant } from '../context/TenantContext';
+import { useAuth } from '../context/AuthContext';
 
 export const OrderTrackingPage: React.FC = () => {
   const { shopId, settings } = useTenant();
+  const { currentUser } = useAuth();
   const [searchParams] = useSearchParams();
   const initialOrder = searchParams.get('order') || '';
+  const initialToken = searchParams.get('token') || '';
 
   const [inputVal, setInputVal] = useState(initialOrder);
+  const [tokenVal, setTokenVal] = useState(initialToken);
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleTrack = async (orderRefToSearch?: string) => {
+  const handleTrack = async (orderRefToSearch?: string, tokenToUse?: string) => {
     const rawRef = (orderRefToSearch ?? inputVal).trim();
+    const rawToken = (tokenToUse ?? tokenVal).trim();
     if (!rawRef) return;
+
+    if (!currentUser && !rawToken) {
+      setOrder(null);
+      setError('Guest order tracking requires your secret Tracking Token from your order receipt.');
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     try {
-      const found = await trackShopOrder(shopId, rawRef);
+      const found = await trackShopOrder(shopId, rawRef, rawToken);
       if (found) {
         setOrder(found);
       } else {
         setOrder(null);
-        setError(`No order found matching "${rawRef}" at ${settings.siteName}. Check your order number (e.g. PK-123456).`);
+        setError(
+          currentUser
+            ? `No order found matching "${rawRef}" at ${settings.siteName}. Check your order number (e.g. PK-123456) or include your Tracking Token.`
+            : `No matching order found for "${rawRef}" with that Tracking Token at ${settings.siteName}.`
+        );
       }
     } catch (err) {
       console.warn(err);
@@ -43,9 +58,12 @@ export const OrderTrackingPage: React.FC = () => {
   useEffect(() => {
     if (initialOrder) {
       setInputVal(initialOrder);
-      handleTrack(initialOrder);
+      setTokenVal(initialToken);
+      if (initialToken || currentUser) {
+        handleTrack(initialOrder, initialToken);
+      }
     }
-  }, [initialOrder, shopId]);
+  }, [initialOrder, initialToken, shopId, currentUser?.uid]);
 
   const getStepIndex = (status: string) => {
     switch (status) {
@@ -103,32 +121,47 @@ export const OrderTrackingPage: React.FC = () => {
         </p>
       </div>
 
-      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200/80 shadow-md max-w-xl mx-auto">
+      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200/80 shadow-md max-w-2xl mx-auto space-y-2.5">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleTrack();
           }}
-          className="flex flex-col sm:flex-row gap-2"
+          className="grid grid-cols-1 sm:grid-cols-12 gap-2"
         >
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+          <div className="relative sm:col-span-5">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
             <input
               type="text"
-              placeholder="Order # (PK-XXXXXX) or Mobile (03001234567)"
+              placeholder={currentUser ? 'Order # or Mobile' : 'Order # (e.g. PK-123456)'}
               value={inputVal}
               onChange={(e) => setInputVal(e.target.value)}
               className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 font-medium"
             />
           </div>
+          <div className="relative sm:col-span-4">
+            <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <input
+              type="text"
+              placeholder={currentUser ? 'Token (optional)' : 'Secret Tracking Token *'}
+              value={tokenVal}
+              onChange={(e) => setTokenVal(e.target.value)}
+              className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 font-mono"
+            />
+          </div>
           <button
             type="submit"
             disabled={loading}
-            className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs sm:text-sm font-bold transition shadow-sm disabled:opacity-60 shrink-0"
+            className="sm:col-span-3 px-4 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs sm:text-sm font-bold transition shadow-sm disabled:opacity-60"
           >
             {loading ? 'Searching...' : 'Track Order'}
           </button>
         </form>
+        <p className="text-[11px] text-slate-400">
+          {currentUser
+            ? 'Signed-in shoppers can look up personal orders by Order # / phone, or enter any guest Tracking Token.'
+            : 'For customer privacy, guest parcel tracking requires both your Order Number and Secret Tracking Token.'}
+        </p>
       </div>
 
       {error && (

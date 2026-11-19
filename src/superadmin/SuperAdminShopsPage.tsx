@@ -19,6 +19,7 @@ import {
   assignShopSubscription,
   extendShopSubscription,
   deleteShopComplete,
+  getShopSubscriptionStatus,
 } from '../services/platformService';
 import { migrateLegacyBazaarPKToTenant } from '../services/migrationService';
 import { Shop, SubscriptionPlan, MigrationResult, BillingCycle } from '../types';
@@ -33,13 +34,16 @@ export const SuperAdminShopsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'suspended'>('all');
   const [planFilter, setPlanFilter] = useState<string>('all');
+  const [subFilter, setSubFilter] = useState<'all' | 'free' | 'paid' | 'trial' | 'expired' | 'active_sub'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'name' | 'products' | 'orders'>('newest');
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
   // Migration state
+  const [migrateModalOpen, setMigrateModalOpen] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
 
   // Plan modal state
   const [planModalShop, setPlanModalShop] = useState<Shop | null>(null);
@@ -86,6 +90,20 @@ export const SuperAdminShopsPage: React.FC = () => {
     if (planFilter !== 'all') {
       res = res.filter((s) => s.subscription?.planId === planFilter);
     }
+    if (subFilter !== 'all') {
+      const planMap = new Map(plans.map((p) => [p.id, p]));
+      res = res.filter((s) => {
+        const planObj = planMap.get(s.subscription?.planId || '');
+        const subStats = getShopSubscriptionStatus(s);
+        const isFree = !planObj || planObj.monthlyPrice === 0 || s.subscription?.isFreeOverride;
+        if (subFilter === 'free') return isFree;
+        if (subFilter === 'paid') return !isFree;
+        if (subFilter === 'trial') return s.subscription?.status === 'trial';
+        if (subFilter === 'expired') return subStats.isExpired;
+        if (subFilter === 'active_sub') return !subStats.isExpired && !subStats.isSuspended;
+        return true;
+      });
+    }
     res.sort((a, b) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       if (sortBy === 'products') return (b.usage?.productsCount || 0) - (a.usage?.productsCount || 0);
@@ -93,13 +111,14 @@ export const SuperAdminShopsPage: React.FC = () => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
     return res;
-  }, [shops, searchQuery, statusFilter, planFilter, sortBy]);
+  }, [shops, plans, searchQuery, statusFilter, planFilter, subFilter, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   const handleRunMigration = async () => {
     setMigrating(true);
+    setMigrationError(null);
     try {
       const res = await migrateLegacyBazaarPKToTenant({
         ownerUid: currentUser?.uid,
@@ -107,7 +126,10 @@ export const SuperAdminShopsPage: React.FC = () => {
         ownerName: currentUser?.displayName || undefined,
       });
       setMigrationResult(res);
+      setMigrateModalOpen(false);
       await loadShops();
+    } catch (err: any) {
+      setMigrationError(err?.message || 'Legacy migration failed.');
     } finally {
       setMigrating(false);
     }
@@ -166,7 +188,7 @@ export const SuperAdminShopsPage: React.FC = () => {
         </div>
         <button
           type="button"
-          onClick={handleRunMigration}
+          onClick={() => setMigrateModalOpen(true)}
           disabled={migrating}
           className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-2 self-start transition"
         >
@@ -175,16 +197,25 @@ export const SuperAdminShopsPage: React.FC = () => {
         </button>
       </div>
 
+      {migrationError && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+          {migrationError}
+        </div>
+      )}
+
       {/* Migration Summary Card */}
       {migrationResult && (
         <div className="bg-white border border-emerald-300 rounded-xl p-5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Legacy Migration Report ({migrationResult.shopSlug})
+                Legacy Migration Report ({migrationResult.shopSlug}) —{' '}
+                <span className={migrationResult.success ? 'text-emerald-700' : 'text-amber-700'}>
+                  {migrationResult.success ? 'Verified Success' : 'Completed With Warnings'}
+                </span>
               </h3>
               <p className="text-xs text-slate-500">
-                Idempotent transfer complete. Legacy collections preserved untouched.
+                Idempotent transfer complete ({migrationResult.migratedCounts.orderTracking} tracking docs indexed). Legacy collections preserved untouched.
               </p>
             </div>
             <button
@@ -203,11 +234,44 @@ export const SuperAdminShopsPage: React.FC = () => {
             <div className="p-2.5 bg-slate-50 rounded-lg">Orders: <strong>{migrationResult.migratedCounts.orders}</strong></div>
             <div className="p-2.5 bg-slate-50 rounded-lg">Coupons: <strong>{migrationResult.migratedCounts.coupons}</strong></div>
           </div>
+
+          {Object.keys(migrationResult.verifiedCounts || {}).length > 0 && (
+            <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-600 flex flex-wrap gap-3">
+              {Object.entries(migrationResult.verifiedCounts).map(([col, v]) => (
+                <span key={col} className={v.matched ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'}>
+                  {col}: {v.actual}/{v.expectedMin} {v.matched ? 'OK' : 'MISMATCH'}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {Object.values(migrationResult.skippedRecords || {}).some((n) => n > 0) && (
+            <p className="text-[11px] text-slate-500">
+              Already-present records skipped idempotently:{' '}
+              {Object.entries(migrationResult.skippedRecords)
+                .filter(([, count]) => count > 0)
+                .map(([col, count]) => `${col} (${count})`)
+                .join(', ')}
+            </p>
+          )}
+
+          {(migrationResult.failedRecords?.length > 0 || migrationResult.errors?.length > 0) && (
+            <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 space-y-1">
+              {migrationResult.failedRecords?.map((f, i) => (
+                <p key={i}>
+                  Failed {f.collection}/{f.id}: {f.error}
+                </p>
+              ))}
+              {migrationResult.errors?.map((e, i) => (
+                <p key={`err-${i}`}>{e}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* Search & Filters */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -223,10 +287,22 @@ export const SuperAdminShopsPage: React.FC = () => {
           onChange={(e) => { setStatusFilter(e.target.value as any); setPage(1); }}
           className="px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white"
         >
-          <option value="all">All Statuses</option>
+          <option value="all">All Shop Statuses</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
           <option value="suspended">Suspended</option>
+        </select>
+        <select
+          value={subFilter}
+          onChange={(e) => { setSubFilter(e.target.value as any); setPage(1); }}
+          className="px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white"
+        >
+          <option value="all">All Subscription States</option>
+          <option value="active_sub">Active Subscription</option>
+          <option value="trial">Trial Stores</option>
+          <option value="paid">Paid Tiers</option>
+          <option value="free">Free / Comp Tier</option>
+          <option value="expired">Expired</option>
         </select>
         <select
           value={planFilter}
@@ -530,6 +606,35 @@ export const SuperAdminShopsPage: React.FC = () => {
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold"
               >
                 {actionBusy ? 'Deleting...' : 'Delete Permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Migration Confirmation Modal */}
+      {migrateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+            <h3 className="text-base font-extrabold text-slate-900">Confirm Legacy BazaarPK Migration</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              This will idempotently copy legacy top-level collections (products, categories, banners, coupons, orders, settings) into the isolated <code className="font-mono font-bold">/shops/bazaarpk</code> tenant, generate non-PII tracking tokens, sync <code className="font-mono font-bold">/shops_public/bazaarpk</code>, and generate a downloadable JSON backup. Existing tenant documents are skipped safely.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setMigrateModalOpen(false)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={migrating}
+                onClick={handleRunMigration}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold disabled:opacity-50"
+              >
+                {migrating ? 'Migrating & Verifying...' : 'Run Idempotent Migration'}
               </button>
             </div>
           </div>

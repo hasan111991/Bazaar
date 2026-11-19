@@ -74,6 +74,9 @@ export const SuperAdminShopDetailPage: React.FC = () => {
 
   const [selectedPlanId, setSelectedPlanId] = useState('growth-plus');
   const [freeComp, setFreeComp] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [confirmDeleteSlug, setConfirmDeleteSlug] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -467,11 +470,7 @@ export const SuperAdminShopDetailPage: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => {
-                if (confirm(`Permanently delete ${shop.name}? This cannot be undone.`)) {
-                  deleteShopComplete(shop.id).then(() => navigate('/super-admin/shops'));
-                }
-              }}
+              onClick={() => setDeleteModalOpen(true)}
               className="px-4 py-2.5 bg-red-600 text-white rounded-xl font-bold flex items-center gap-1.5 ml-auto"
             >
               <Trash2 className="w-4 h-4" /> Delete Shop
@@ -479,6 +478,53 @@ export const SuperAdminShopDetailPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {deleteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-red-200 max-w-md w-full p-6 space-y-4">
+            <h3 className="text-base font-extrabold text-red-700">Delete Shop Permanently</h3>
+            <p className="text-xs text-slate-600">
+              Permanently remove <strong>{shop.name}</strong> and all products, orders, settings, and slug reservation. Type{' '}
+              <code className="font-mono font-bold text-slate-900">{shop.slug}</code> to confirm.
+            </p>
+            <input
+              type="text"
+              value={confirmDeleteSlug}
+              onChange={(e) => setConfirmDeleteSlug(e.target.value)}
+              placeholder={shop.slug}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteModalOpen(false);
+                  setConfirmDeleteSlug('');
+                }}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting || confirmDeleteSlug !== shop.slug}
+                onClick={async () => {
+                  setDeleting(true);
+                  try {
+                    await deleteShopComplete(shop.id);
+                    navigate('/super-admin/shops');
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold"
+              >
+                {deleting ? 'Deleting...' : 'Delete Permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

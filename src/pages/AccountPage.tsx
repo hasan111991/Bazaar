@@ -60,6 +60,8 @@ export const AccountPage: React.FC = () => {
   const [addrStreet, setAddrStreet] = useState('');
   const [addrCity, setAddrCity] = useState('Karachi');
   const [addrPostal, setAddrPostal] = useState('');
+  const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
+  const [cancellingOrder, setCancellingOrder] = useState(false);
 
   useEffect(() => {
     setActiveTab(searchParams.get('tab') || 'orders');
@@ -96,16 +98,20 @@ export const AccountPage: React.FC = () => {
     setSearchParams({ tab });
   };
 
-  const handleCancelOrder = async (ord: Order) => {
-    if (!window.confirm('Are you sure you want to cancel this pending order?')) return;
+  const confirmCancelOrder = async () => {
+    if (!cancelTarget) return;
+    setCancellingOrder(true);
     try {
-      await updateShopOrderStatus(shopId, ord.id, { orderStatus: 'Cancelled' }, ord.orderNumber);
+      await updateShopOrderStatus(shopId, cancelTarget.id, { orderStatus: 'Cancelled' }, cancelTarget.orderNumber);
       setOrders((prev) =>
-        prev.map((o) => (o.id === ord.id ? { ...o, orderStatus: 'Cancelled' } : o))
+        prev.map((o) => (o.id === cancelTarget.id ? { ...o, orderStatus: 'Cancelled' } : o))
       );
       showToast('Order has been cancelled.', 'info');
+      setCancelTarget(null);
     } catch {
       showToast('Could not cancel order at this time.', 'error');
+    } finally {
+      setCancellingOrder(false);
     }
   };
 
@@ -452,7 +458,7 @@ export const AccountPage: React.FC = () => {
 
                   {ord.orderStatus === 'Pending' && (
                     <button
-                      onClick={() => handleCancelOrder(ord)}
+                      onClick={() => setCancelTarget(ord)}
                       className="text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1"
                     >
                       <XCircle className="w-3.5 h-3.5" /> Cancel Order
@@ -670,6 +676,34 @@ export const AccountPage: React.FC = () => {
             >
               <KeyRound className="w-4 h-4" /> Send Password Reset Email
             </button>
+          </div>
+        </div>
+      )}
+
+      {cancelTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 space-y-4">
+            <h3 className="text-base font-extrabold text-slate-900">Cancel Pending Order?</h3>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to cancel order <code className="font-mono font-bold text-slate-900">{cancelTarget.orderNumber}</code>?
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCancelTarget(null)}
+                className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
+              >
+                Keep Order
+              </button>
+              <button
+                type="button"
+                disabled={cancellingOrder}
+                onClick={confirmCancelOrder}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold disabled:opacity-50"
+              >
+                {cancellingOrder ? 'Cancelling...' : 'Confirm Cancel'}
+              </button>
+            </div>
           </div>
         </div>
       )}

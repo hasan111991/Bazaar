@@ -1,24 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useLocation, Link } from 'react-router-dom';
+import { useParams, useLocation, useSearchParams, Link } from 'react-router-dom';
 import confetti from 'canvas-confetti';
-import { CheckCircle2, Truck, Printer, ArrowRight, Store, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle2, Truck, Printer, ArrowRight, Store, Image as ImageIcon, Copy, Check, KeyRound } from 'lucide-react';
 import { getDoc, doc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
+import { trackShopOrder } from '../services/tenantService';
 import { Order } from '../types';
 import {
   formatPKR,
   getPaymentMethodLabel,
   getFulfillmentLabel,
   FALLBACK_PRODUCT_IMAGE,
-  DEFAULT_SHOP_ID,
 } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
 
 export const OrderSuccessPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { shopId, storeBasePath } = useTenant();
   const [order, setOrder] = useState<Order | null>(location.state?.order || null);
+  const [copiedToken, setCopiedToken] = useState(false);
+
+  const qOrder = searchParams.get('order') || '';
+  const qToken = searchParams.get('token') || '';
 
   useEffect(() => {
     try {
@@ -29,23 +34,29 @@ export const OrderSuccessPage: React.FC = () => {
       });
     } catch {}
 
-    if (!order && id) {
+    if (order) return;
+
+    if (qOrder && qToken) {
+      trackShopOrder(shopId, qOrder, qToken)
+        .then((res) => {
+          if (res) setOrder({ ...res, trackingToken: qToken });
+        })
+        .catch(() => {});
+      return;
+    }
+
+    if (id && auth.currentUser?.uid) {
       getDoc(doc(db, 'shops', shopId, 'orders', id))
-        .then(async (snap) => {
+        .then((snap) => {
           if (snap.exists()) {
             setOrder({ ...(snap.data() as Order), id: snap.id });
-          } else if (shopId === DEFAULT_SHOP_ID) {
-            const legacy = await getDoc(doc(db, 'orders', id)).catch(() => null);
-            if (legacy && legacy.exists()) {
-              setOrder({ ...(legacy.data() as Order), id: legacy.id });
-            }
           }
         })
         .catch((err) => {
           console.warn('Could not load order receipt directly:', err);
         });
     }
-  }, [id, order, shopId]);
+  }, [id, order, shopId, qOrder, qToken]);
 
   const handlePrint = () => {
     window.print();
@@ -93,6 +104,32 @@ export const OrderSuccessPage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {order?.trackingToken && (
+          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div className="flex items-start gap-2">
+              <KeyRound className="w-4 h-4 text-emerald-800 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-emerald-950">Secret Parcel Tracking Token</p>
+                <p className="text-[11px] text-emerald-800">
+                  Save this token with your Order Number to track live parcel updates securely:
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(order.trackingToken || '');
+                setCopiedToken(true);
+                setTimeout(() => setCopiedToken(false), 2000);
+              }}
+              className="px-3 py-1.5 bg-white border border-emerald-300 rounded-xl font-mono font-bold text-emerald-900 flex items-center gap-1.5 self-start sm:self-auto shrink-0 hover:bg-emerald-100/50 transition"
+            >
+              <span>{order.trackingToken}</span>
+              {copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+            </button>
+          </div>
+        )}
 
         {order ? (
           <>
@@ -242,7 +279,7 @@ export const OrderSuccessPage: React.FC = () => {
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-3 print:hidden">
         <Link
-          to={`${storeBasePath}/tracking?order=${order?.orderNumber || ''}`}
+          to={`${storeBasePath}/tracking?order=${order?.orderNumber || ''}${order?.trackingToken ? `&token=${encodeURIComponent(order.trackingToken)}` : ''}`}
           className="flex-1 py-3 px-4 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition shadow-md"
         >
           <Truck className="w-4 h-4" /> Live Courier Tracking

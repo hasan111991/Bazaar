@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  HashRouter,
+  BrowserRouter,
   Routes,
   Route,
   Outlet,
@@ -8,6 +8,7 @@ import {
   Navigate,
   useParams,
 } from 'react-router-dom';
+import { getRouterBasename } from './utils/tenantDomain';
 import { Store, ShieldAlert, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
 import { AuthProvider } from './context/AuthContext';
 import { TenantProvider, useTenant } from './context/TenantContext';
@@ -235,11 +236,13 @@ class AppErrorBoundary extends React.Component<
 }
 
 export default function App() {
+  const basename = getRouterBasename();
+
   return (
     <AppErrorBoundary>
       <AuthProvider>
         <ToastProvider>
-          <HashRouter>
+          <BrowserRouter basename={basename}>
             <Routes>
               {/* Layer 1: SaaS Platform Marketing & Auth */}
               <Route path="/" element={<PlatformLandingPage />} />
@@ -313,7 +316,7 @@ export default function App() {
               {/* Platform-wide Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-          </HashRouter>
+          </BrowserRouter>
         </ToastProvider>
       </AuthProvider>
     </AppErrorBoundary>

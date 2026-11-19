@@ -14,20 +14,20 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import heroSaasImg from '../assets/images/hero_saas_commerce_1795028612666.jpg';
-import { SubscriptionPlan, Shop } from '../types';
+import { SubscriptionPlan, ShopPublic } from '../types';
 import { formatPKR, DEFAULT_SHOP_ID } from '../data/seedData';
-import { getSubscriptionPlans, getActiveDirectoryShops } from '../services/platformService';
+import { getSubscriptionPlans, getActiveDirectoryShopsPublic } from '../services/platformService';
 import { useAuth } from '../context/AuthContext';
 
 export const PlatformLandingPage: React.FC = () => {
   const { currentUser, isSuperAdmin, shopMemberships } = useAuth();
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
-  const [shops, setShops] = useState<Shop[]>([]);
+  const [shops, setShops] = useState<ShopPublic[]>([]);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
 
   useEffect(() => {
     getSubscriptionPlans(true).then(setPlans).catch(() => {});
-    getActiveDirectoryShops().then(setShops).catch(() => {});
+    getActiveDirectoryShopsPublic().then(setShops).catch(() => {});
   }, []);
 
   return (

@@ -26,6 +26,7 @@ export const ShopAppearancePage: React.FC = () => {
   const [activePageKey, setActivePageKey] = useState<ShopPageContent['key']>('about');
   const [pageTitle, setPageTitle] = useState('About Store');
   const [pageBody, setPageBody] = useState('');
+  const [pageImageUrl, setPageImageUrl] = useState('');
   const [pageSavedMsg, setPageSavedMsg] = useState(false);
 
   useEffect(() => {
@@ -38,9 +39,11 @@ export const ShopAppearancePage: React.FC = () => {
       if (p) {
         setPageTitle(p.title);
         setPageBody(p.content);
+        setPageImageUrl(p.imageUrl || '');
       } else {
         setPageTitle(PAGE_KEYS.find((k) => k.key === activePageKey)?.label || 'Page');
         setPageBody('');
+        setPageImageUrl('');
       }
     });
   }, [shopId, activePageKey]);
@@ -66,6 +69,7 @@ export const ShopAppearancePage: React.FC = () => {
       key: activePageKey,
       title: pageTitle,
       content: pageBody,
+      imageUrl: pageImageUrl || undefined,
       updatedAt: new Date().toISOString(),
     });
     setPageSavedMsg(true);
@@ -161,7 +165,6 @@ export const ShopAppearancePage: React.FC = () => {
           images={form.logoUrl ? [form.logoUrl] : []}
           onChange={(imgs) => setForm({ ...form, logoUrl: imgs[0] || '' })}
           label="Store Logo (PNG / WebP)"
-          allowDataUrlFallback
         />
       </form>
 
@@ -197,6 +200,13 @@ export const ShopAppearancePage: React.FC = () => {
           onChange={(e) => setPageTitle(e.target.value)}
           placeholder="Page Heading"
           className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold"
+        />
+        <ImageUploader
+          shopId={shopId}
+          folder="pages"
+          images={pageImageUrl ? [pageImageUrl] : []}
+          onChange={(imgs) => setPageImageUrl(imgs[0] || '')}
+          label="Optional Page Header Banner (Firebase Storage)"
         />
         <textarea
           rows={6}

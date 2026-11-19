@@ -44,14 +44,7 @@ export const ContactPage: React.FC = () => {
     }
   };
 
-  const handleWhatsApp = () => {
-    const ph = settings.whatsappNumber.replace(/[^0-9]/g, '');
-    window.open(
-      `https://wa.me/${ph}?text=Salam!%20I%20need%20help%20with%20an%20order%20from%20${encodeURIComponent(settings.siteName)}`,
-      '_blank',
-      'noopener,noreferrer'
-    );
-  };
+  const whatsappUrl = `https://wa.me/${settings.whatsappNumber.replace(/[^0-9]/g, '')}?text=Salam!%20I%20need%20help%20with%20an%20order%20from%20${encodeURIComponent(settings.siteName)}`;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:py-12 space-y-10 sm:space-y-12">
@@ -76,12 +69,14 @@ export const ContactPage: React.FC = () => {
             <h4 className="font-bold text-slate-900 text-sm">Direct Phone & WhatsApp</h4>
             <p className="text-xs text-slate-500">Call us or message on WhatsApp for instant assistance.</p>
             <p className="font-bold text-emerald-800 text-sm">{settings.contactPhone}</p>
-            <button
-              onClick={handleWhatsApp}
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               className="w-full py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba59] text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs"
             >
               <MessageSquare className="w-4 h-4" /> Chat on WhatsApp
-            </button>
+            </a>
           </div>
 
           <div className="p-5 sm:p-6 bg-white rounded-3xl border border-slate-200/80 shadow-xs space-y-3">

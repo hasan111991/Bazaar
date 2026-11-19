@@ -32,6 +32,7 @@ export const SuperAdminDashboardPage: React.FC = () => {
   const [pendingPayments, setPendingPayments] = useState<PlatformPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [migrating, setMigrating] = useState(false);
+  const [migrateConfirmOpen, setMigrateConfirmOpen] = useState(false);
   const [migrationBanner, setMigrationBanner] = useState<string | null>(null);
 
   const loadData = async () => {
@@ -67,10 +68,14 @@ export const SuperAdminDashboardPage: React.FC = () => {
       });
       setMigrationBanner(
         res.success
-          ? `Migrated BazaarPK tenant (${res.migratedCounts.products} products, ${res.migratedCounts.orders} orders, ${res.migratedCounts.categories} categories).`
+          ? `Migrated BazaarPK tenant (${res.migratedCounts.products} products, ${res.migratedCounts.orders} orders, ${res.migratedCounts.categories} categories, ${res.migratedCounts.orderTracking} tracking records verified).`
           : `Migration finished with notes: ${res.errors.join(', ')}`
       );
+      setMigrateConfirmOpen(false);
       await loadData();
+    } catch (err: any) {
+      setMigrationBanner(`Migration failed: ${err?.message || 'Unauthorized or network error'}`);
+      setMigrateConfirmOpen(false);
     } finally {
       setMigrating(false);
     }
@@ -98,7 +103,7 @@ export const SuperAdminDashboardPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={handleQuickMigration}
+            onClick={() => setMigrateConfirmOpen(true)}
             disabled={migrating}
             className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-800 flex items-center gap-2 transition"
           >
@@ -292,6 +297,34 @@ export const SuperAdminDashboardPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {migrateConfirmOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+            <h3 className="text-base font-extrabold text-slate-900">Sync Legacy BazaarPK to Tenant?</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              This idempotently copies top-level legacy records into <code className="font-mono font-bold">/shops/bazaarpk</code> and updates public mirrors without deleting any legacy collections.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setMigrateConfirmOpen(false)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={migrating}
+                onClick={handleQuickMigration}
+                className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-lg text-xs font-bold disabled:opacity-50"
+              >
+                {migrating ? 'Syncing...' : 'Confirm Migration'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

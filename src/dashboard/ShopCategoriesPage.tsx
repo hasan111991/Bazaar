@@ -132,7 +132,6 @@ export const ShopCategoriesPage: React.FC = () => {
                 images={editing.imageUrl ? [editing.imageUrl] : []}
                 onChange={(imgs) => setEditing({ ...editing, imageUrl: imgs[0] || '' })}
                 label="Category Thumbnail"
-                allowDataUrlFallback
               />
             </div>
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">

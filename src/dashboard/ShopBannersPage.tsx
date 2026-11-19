@@ -153,7 +153,6 @@ export const ShopBannersPage: React.FC = () => {
                 images={editing.imageUrl ? [editing.imageUrl] : []}
                 onChange={(imgs) => setEditing({ ...editing, imageUrl: imgs[0] || '' })}
                 label="Banner Artwork (16:9 Recommended)"
-                allowDataUrlFallback
               />
             </div>
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">

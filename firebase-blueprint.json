@@ -100,6 +100,26 @@
       },
       "required": ["id", "slug", "name", "ownerId", "status", "subscription"]
     },
+    "ShopPublic": {
+      "title": "Public Shop Directory Profile",
+      "description": "Publicly readable safe storefront metadata without owner PII or subscription financials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "slug": { "type": "string" },
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "city": { "type": "string" },
+        "publicContactPhone": { "type": "string" },
+        "publicSupportEmail": { "type": "string" },
+        "storefrontAddress": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "suspended"] },
+        "theme": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "slug", "name", "status"]
+    },
     "ShopSlug": {
       "title": "Shop Slug Registry",
       "description": "Unique slug index for instant storefront resolution",
@@ -176,9 +196,13 @@
       "schema": { "$ref": "#/entities/ShopInvite" },
       "description": "Pending staff invitations"
     },
+    "/shops_public/{shopId}": {
+      "schema": { "$ref": "#/entities/ShopPublic" },
+      "description": "Public storefront metadata mirror exposing zero private owner or billing data"
+    },
     "/shops/{shopId}": {
       "schema": { "$ref": "#/entities/Shop" },
-      "description": "Master tenant store documents"
+      "description": "Private master tenant store documents (Super Admin and Shop Members only)"
     },
     "/shops/{shopId}/products/{productId}": {
       "description": "Tenant product catalog"
@@ -189,17 +213,23 @@
     "/shops/{shopId}/banners/{bannerId}": {
       "description": "Tenant storefront banners"
     },
+    "/shops/{shopId}/settings/public": {
+      "description": "Public storefront settings (branding, theme, shipping rates, pickup counter, enabled checkout labels)"
+    },
+    "/shops/{shopId}/settings/private": {
+      "description": "Private merchant payment/bank settlement accounts & owner-only contact settings"
+    },
     "/shops/{shopId}/settings/{settingId}": {
-      "description": "Tenant storefront general, payment, delivery, and self-pickup settings"
+      "description": "Legacy combined tenant settings (restricted to Shop Members and Super Admin)"
     },
     "/shops/{shopId}/coupons/{couponId}": {
       "description": "Tenant discount coupons"
     },
     "/shops/{shopId}/orders/{orderId}": {
-      "description": "Tenant customer orders"
+      "description": "Tenant customer orders (with trackingTokenHash)"
     },
-    "/shops/{shopId}/order_tracking/{orderNumber}": {
-      "description": "Non-PII public order tracking views for a tenant"
+    "/shops/{shopId}/order_tracking/{trackKey}": {
+      "description": "Non-PII tokenized public order tracking views for a tenant"
     },
     "/shops/{shopId}/reviews/{reviewId}": {
       "description": "Tenant product reviews"

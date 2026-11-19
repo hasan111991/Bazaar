@@ -3,35 +3,43 @@ import {
   uploadBytesResumable,
   getDownloadURL,
   deleteObject,
+  getMetadata,
 } from 'firebase/storage';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
-import { storage, db } from '../firebase/config';
-import { compressPaymentProofImage } from '../utils/imageUpload';
+import { storage, db, auth } from '../firebase/config';
 
-export type StorageFolder = 'logo' | 'products' | 'banners' | 'categories' | 'pages' | 'payments' | 'subscription';
+export type StorageFolder =
+  | 'logo'
+  | 'products'
+  | 'banners'
+  | 'categories'
+  | 'pages'
+  | 'payments'
+  | 'subscription';
 
 export interface UploadProgressOptions {
   shopId: string;
   folder: StorageFolder;
-  subPath?: string; // e.g., productId
+  subPath?: string; // e.g., productId or orderSessionId
   onProgress?: (percent: number) => void;
   maxDimension?: number;
-  allowDataUrlFallback?: boolean; // Useful when guest/demo checkout hits unprovisioned storage bucket CORS
 }
 
 export interface UploadedImageResult {
   url: string;
-  storagePath?: string;
+  storagePath: string;
   bytes: number;
-  usedFallback?: boolean;
 }
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export function validateImageFile(file: File): void {
   if (!ALLOWED_IMAGE_TYPES.includes(file.type.toLowerCase())) {
     throw new Error('Invalid image format. Please upload JPG, PNG, WebP, or GIF.');
+  }
+  if (file.size <= 0) {
+    throw new Error('Selected image file is empty.');
   }
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new Error('Image size exceeds 5 MB limit. Please pick a smaller image.');
@@ -92,11 +100,13 @@ async function compressImageToBlob(file: File, maxDimension = 1400): Promise<Blo
 }
 
 function sanitizeFileName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9.]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60) || 'image';
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9.]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'image'
+  );
 }
 
 export async function uploadShopImage(
@@ -105,49 +115,63 @@ export async function uploadShopImage(
 ): Promise<UploadedImageResult> {
   validateImageFile(file);
 
-  const { shopId, folder, subPath, onProgress, maxDimension = 1400, allowDataUrlFallback = false } = options;
+  const { shopId, folder, subPath, onProgress, maxDimension = 1400 } = options;
 
   // Enforce per-shop storage quota if uploading admin assets
   if (folder !== 'payments' && shopId) {
-    try {
-      const shopSnap = await getDoc(doc(db, 'shops', shopId));
-      if (shopSnap.exists()) {
-        const shopData = shopSnap.data();
-        const usedBytes = Number(shopData?.usage?.storageBytes || 0);
-        const planId = shopData?.subscription?.planId;
-        if (planId) {
-          const planSnap = await getDoc(doc(db, 'platform_plans', planId));
-          if (planSnap.exists()) {
-            const maxStorageBytes = Number(planSnap.data().maxStorageMB || 50) * 1024 * 1024;
-            if (usedBytes + file.size > maxStorageBytes) {
-              throw new Error(
-                `Storage quota reached (${Math.round(usedBytes / (1024 * 1024))}MB / ${planSnap.data().maxStorageMB}MB). Upgrade your plan to upload more assets.`
-              );
-            }
+    const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+    if (shopSnap && shopSnap.exists()) {
+      const shopData = shopSnap.data();
+      const usedBytes = Number(shopData?.usage?.storageBytes || 0);
+      const planId = shopData?.subscription?.planId;
+      if (planId) {
+        const planSnap = await getDoc(doc(db, 'platform_plans', planId)).catch(() => null);
+        if (planSnap && planSnap.exists()) {
+          const maxStorageBytes = Number(planSnap.data().maxStorageMB || 50) * 1024 * 1024;
+          if (usedBytes + file.size > maxStorageBytes) {
+            throw new Error(
+              `Storage quota reached (${Math.round(usedBytes / (1024 * 1024))} MB / ${planSnap.data().maxStorageMB} MB). Delete unused assets or upgrade your plan.`
+            );
           }
         }
-      }
-    } catch (quotaErr: any) {
-      if (quotaErr?.message?.includes('Storage quota reached')) {
-        throw quotaErr;
       }
     }
   }
 
   const processedBlob = await compressImageToBlob(file, maxDimension);
+  if (processedBlob.size > MAX_UPLOAD_BYTES) {
+    throw new Error('Processed image still exceeds 5 MB limit.');
+  }
+
   const ext = processedBlob.type === 'image/webp' ? 'webp' : file.name.split('.').pop() || 'jpg';
   const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''));
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${baseName}.${ext}`;
 
-  const pathSegments = ['shops', shopId, folder];
-  if (subPath) pathSegments.push(subPath);
-  pathSegments.push(fileName);
-  const storagePath = pathSegments.join('/');
+  let storagePath: string;
+  if (folder === 'payments') {
+    const sessionSegment = subPath || `sess_${Date.now()}`;
+    storagePath = `shops/${shopId}/payments/${sessionSegment}/${fileName}`;
+  } else {
+    const pathSegments = ['shops', shopId, folder];
+    if (subPath) pathSegments.push(subPath);
+    pathSegments.push(fileName);
+    storagePath = pathSegments.join('/');
+  }
+
+  const customMetadata: Record<string, string> = {
+    shopId,
+    folder,
+    uploaderUid: auth.currentUser?.uid || 'guest',
+  };
+  if (folder === 'payments') {
+    customMetadata.purpose = 'checkout_payment_proof';
+  }
 
   try {
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, processedBlob, {
       contentType: processedBlob.type || file.type,
+      customMetadata,
     });
 
     const downloadUrl = await new Promise<string>((resolve, reject) => {
@@ -167,16 +191,12 @@ export async function uploadShopImage(
       );
     });
 
-    // Record storage usage on shop doc
+    // Record exact storage usage bytes on shop doc
     if (folder !== 'payments' && shopId) {
-      try {
-        await updateDoc(doc(db, 'shops', shopId), {
-          'usage.storageBytes': increment(processedBlob.size),
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (e) {
-        console.warn('Could not increment shop storageBytes:', e);
-      }
+      await updateDoc(doc(db, 'shops', shopId), {
+        'usage.storageBytes': increment(processedBlob.size),
+        updatedAt: new Date().toISOString(),
+      }).catch((e) => console.warn('Could not increment shop storageBytes:', e));
     }
 
     onProgress?.(100);
@@ -184,45 +204,115 @@ export async function uploadShopImage(
       url: downloadUrl,
       storagePath,
       bytes: processedBlob.size,
-      usedFallback: false,
     };
   } catch (storageErr: any) {
     console.warn('Firebase Storage upload error:', storageErr);
-    if (allowDataUrlFallback) {
-      const fallbackDataUrl = await compressPaymentProofImage(file, {
-        maxDimension: 900,
-        maxLength: 220_000,
-      });
-      onProgress?.(100);
-      return {
-        url: fallbackDataUrl,
-        bytes: fallbackDataUrl.length,
-        usedFallback: true,
-      };
-    }
     throw new Error(
       storageErr?.code === 'storage/unauthorized'
-        ? 'Firebase Storage rules have not been deployed or you lack upload permissions. Ensure storage.rules are deployed.'
+        ? 'Upload denied by Firebase Storage rules. Verify you are signed into this store workspace and storage.rules & custom claims are deployed.'
         : storageErr?.message || 'Failed to upload image to Firebase Storage.'
     );
   }
+}
+
+export async function uploadPlatformSubscriptionProof(
+  shopId: string,
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<UploadedImageResult> {
+  validateImageFile(file);
+  const processedBlob = await compressImageToBlob(file, 1200);
+  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_receipt.${ext}`;
+  const storagePath = `platform/payments/${shopId}/${fileName}`;
+
+  const storageRef = ref(storage, storagePath);
+  const uploadTask = uploadBytesResumable(storageRef, processedBlob, {
+    contentType: processedBlob.type || file.type,
+    customMetadata: {
+      shopId,
+      purpose: 'subscription_payment_receipt',
+      uploaderUid: auth.currentUser?.uid || 'unknown',
+    },
+  });
+
+  const downloadUrl = await new Promise<string>((resolve, reject) => {
+    uploadTask.on(
+      'state_changed',
+      (snapshot) => {
+        if (onProgress && snapshot.totalBytes > 0) {
+          onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+        }
+      },
+      (err) => reject(err),
+      async () => {
+        const url = await getDownloadURL(uploadTask.snapshot.ref);
+        resolve(url);
+      }
+    );
+  });
+
+  onProgress?.(100);
+  return { url: downloadUrl, storagePath, bytes: processedBlob.size };
+}
+
+export async function uploadUserProfileAvatar(
+  userId: string,
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<UploadedImageResult> {
+  validateImageFile(file);
+  const processedBlob = await compressImageToBlob(file, 600);
+  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+  const storagePath = `users/${userId}/profile/${Date.now()}_avatar.${ext}`;
+  const storageRef = ref(storage, storagePath);
+
+  const uploadTask = uploadBytesResumable(storageRef, processedBlob, {
+    contentType: processedBlob.type || file.type,
+    customMetadata: { userId, purpose: 'profile_avatar' },
+  });
+
+  const downloadUrl = await new Promise<string>((resolve, reject) => {
+    uploadTask.on(
+      'state_changed',
+      (snapshot) => {
+        if (onProgress && snapshot.totalBytes > 0) {
+          onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+        }
+      },
+      (err) => reject(err),
+      async () => {
+        const url = await getDownloadURL(uploadTask.snapshot.ref);
+        resolve(url);
+      }
+    );
+  });
+
+  onProgress?.(100);
+  return { url: downloadUrl, storagePath, bytes: processedBlob.size };
 }
 
 export async function deleteStorageImageByUrl(url?: string, shopId?: string): Promise<void> {
   if (!url || !url.includes('firebasestorage.googleapis.com')) return;
   try {
     const imageRef = ref(storage, url);
+    let exactBytes = 0;
+    try {
+      const meta = await getMetadata(imageRef);
+      exactBytes = Number(meta.size || 0);
+    } catch {
+      exactBytes = 0;
+    }
+
     await deleteObject(imageRef);
-    if (shopId) {
-      // Best-effort estimate reduction (50 KB avg) without negative underflow
-      try {
-        const shopSnap = await getDoc(doc(db, 'shops', shopId));
-        if (shopSnap.exists()) {
-          const current = Number(shopSnap.data()?.usage?.storageBytes || 0);
-          const next = Math.max(0, current - 50_000);
-          await updateDoc(doc(db, 'shops', shopId), { 'usage.storageBytes': next });
-        }
-      } catch {}
+
+    if (shopId && exactBytes > 0) {
+      const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+      if (shopSnap && shopSnap.exists()) {
+        const current = Number(shopSnap.data()?.usage?.storageBytes || 0);
+        const next = Math.max(0, current - exactBytes);
+        await updateDoc(doc(db, 'shops', shopId), { 'usage.storageBytes': next }).catch(() => {});
+      }
     }
   } catch (err) {
     console.warn('Storage image delete note:', err);
