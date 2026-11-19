@@ -24,10 +24,15 @@ import {
   Store,
   Loader2,
   Bell,
+  Calculator,
+  Truck,
+  BookOpen,
+  Receipt,
+  Lock,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { DashboardProvider, useDashboard } from './DashboardContext';
-import { StaffPermission, NotificationItem } from '../types';
+import { StaffPermission, NotificationItem, PlanFeatures } from '../types';
 import { getShopNotifications, markNotificationRead } from '../services/tenantService';
 
 const DashboardShell: React.FC = () => {
@@ -40,6 +45,7 @@ const DashboardShell: React.FC = () => {
     isSuspended,
     isExpired,
     hasPermission,
+    canUseFeature,
   } = useDashboard();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -111,22 +117,27 @@ const DashboardShell: React.FC = () => {
     label: string;
     icon: any;
     perm: StaffPermission;
+    feature?: keyof PlanFeatures;
     end?: boolean;
   }[] = [
     { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, perm: 'overview', end: true },
+    { to: '/dashboard/pos', label: 'POS & Billing', icon: Calculator, perm: 'pos', feature: 'pos' },
     { to: '/dashboard/products', label: 'Products', icon: Package, perm: 'products' },
     { to: '/dashboard/categories', label: 'Categories', icon: Grid, perm: 'categories' },
     { to: '/dashboard/orders', label: 'Orders & Invoices', icon: ShoppingCart, perm: 'orders' },
+    { to: '/dashboard/purchases', label: 'Purchases', icon: Receipt, perm: 'purchases', feature: 'suppliersPurchases' },
+    { to: '/dashboard/suppliers', label: 'Suppliers', icon: Truck, perm: 'suppliers', feature: 'suppliersPurchases' },
     { to: '/dashboard/customers', label: 'Customers', icon: Users, perm: 'customers' },
+    { to: '/dashboard/khata', label: 'Customer Khata', icon: BookOpen, perm: 'khata', feature: 'khata' },
     { to: '/dashboard/inventory', label: 'Inventory', icon: Boxes, perm: 'inventory' },
     { to: '/dashboard/coupons', label: 'Coupons', icon: Ticket, perm: 'coupons' },
     { to: '/dashboard/banners', label: 'Banners', icon: ImageIcon, perm: 'banners' },
     { to: '/dashboard/appearance', label: 'Appearance & Pages', icon: Palette, perm: 'appearance' },
     { to: '/dashboard/settings', label: 'Payments & Self-Pickup', icon: Settings, perm: 'settings' },
     { to: '/dashboard/staff', label: 'Staff & Roles', icon: UserCog, perm: 'staff' },
-    { to: '/dashboard/reports', label: 'Reports & Analytics', icon: BarChart3, perm: 'reports' },
+    { to: '/dashboard/reports', label: 'Reports & Profit', icon: BarChart3, perm: 'reports' },
     { to: '/dashboard/subscription', label: 'Subscription Plan', icon: CreditCard, perm: 'subscription' },
-    { to: '/dashboard/profile', label: 'Inbox, Logs & Profile', icon: UserCircle, perm: 'overview' },
+    { to: '/dashboard/profile', label: 'Support, Logs & Profile', icon: UserCircle, perm: 'overview' },
   ];
 
   const visibleNav = navItems.filter((item) => hasPermission(item.perm));
@@ -188,24 +199,30 @@ const DashboardShell: React.FC = () => {
         )}
 
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {visibleNav.map((item) => (
-            <NavLink
-              key={item.to}
-              to={`${item.to}${querySuffix}`}
-              end={item.end}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                `flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition ${
-                  isActive
-                    ? 'bg-[#065F46] text-white'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`
-              }
-            >
-              <item.icon className="w-4 h-4 shrink-0" />
-              <span className="truncate">{item.label}</span>
-            </NavLink>
-          ))}
+          {visibleNav.map((item) => {
+            const locked = item.feature ? !canUseFeature(item.feature) : false;
+            return (
+              <NavLink
+                key={item.to}
+                to={`${item.to}${querySuffix}`}
+                end={item.end}
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                    isActive
+                      ? 'bg-[#065F46] text-white'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`
+                }
+              >
+                <span className="flex items-center gap-2.5 min-w-0">
+                  <item.icon className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {locked && <Lock className="w-3 h-3 shrink-0 opacity-60" />}
+              </NavLink>
+            );
+          })}
         </nav>
 
         <div className="p-3 border-t border-slate-200 space-y-1.5 text-xs">

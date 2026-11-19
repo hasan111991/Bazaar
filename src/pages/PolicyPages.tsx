@@ -3,13 +3,14 @@ import { ChevronDown, ChevronUp, Store, MapPin, Phone, Mail } from 'lucide-react
 import { useTenant } from '../context/TenantContext';
 import { getShopPageContent } from '../services/tenantService';
 import { ShopPageContent } from '../types';
+import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
 
 const CustomCMSBody: React.FC<{ pageKey: ShopPageContent['key']; fallback: React.ReactNode; titleFallback: string }> = ({
   pageKey,
   fallback,
   titleFallback,
 }) => {
-  const { shopId } = useTenant();
+  const { shopId, shop, settings } = useTenant();
   const [cmsPage, setCmsPage] = useState<ShopPageContent | null>(null);
 
   useEffect(() => {
@@ -24,25 +25,48 @@ const CustomCMSBody: React.FC<{ pageKey: ShopPageContent['key']; fallback: React
     };
   }, [shopId, pageKey]);
 
+  const resolvedTitle = `${cmsPage?.title || titleFallback} | ${settings.siteName}`;
+  const resolvedDesc = cmsPage?.content
+    ? cmsPage.content.replace(/\s+/g, ' ').trim().slice(0, 155)
+    : `${titleFallback} for ${settings.siteName} (${settings.city || 'Pakistan'}).`;
+
   if (cmsPage && cmsPage.content && cmsPage.content.trim()) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-12 space-y-6">
-        <h1 className="text-3xl font-black text-slate-900">{cmsPage.title || titleFallback}</h1>
-        {cmsPage.imageUrl && (
-          <img
-            src={cmsPage.imageUrl}
-            alt={cmsPage.title || titleFallback}
-            className="w-full max-h-72 object-cover rounded-3xl border border-slate-200 shadow-xs"
-          />
-        )}
-        <div className="bg-white p-5 sm:p-8 rounded-3xl border border-slate-200/80 shadow-xs text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line">
-          {cmsPage.content}
+      <>
+        <DynamicSeoHead
+          shop={shop}
+          settings={settings}
+          pageTitle={resolvedTitle}
+          pageDescription={resolvedDesc}
+        />
+        <div className="max-w-4xl mx-auto px-4 py-12 space-y-6">
+          <h1 className="text-3xl font-black text-slate-900">{cmsPage.title || titleFallback}</h1>
+          {cmsPage.imageUrl && (
+            <img
+              src={cmsPage.imageUrl}
+              alt={cmsPage.title || titleFallback}
+              className="w-full max-h-72 object-cover rounded-3xl border border-slate-200 shadow-xs"
+            />
+          )}
+          <div className="bg-white p-5 sm:p-8 rounded-3xl border border-slate-200/80 shadow-xs text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+            {cmsPage.content}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
-  return <>{fallback}</>;
+  return (
+    <>
+      <DynamicSeoHead
+        shop={shop}
+        settings={settings}
+        pageTitle={resolvedTitle}
+        pageDescription={resolvedDesc}
+      />
+      {fallback}
+    </>
+  );
 };
 
 export const AboutPage: React.FC = () => {

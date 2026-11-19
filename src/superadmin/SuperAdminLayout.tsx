@@ -12,6 +12,9 @@ import {
   ShieldAlert,
   ExternalLink,
   Loader2,
+  LifeBuoy,
+  History,
+  Settings,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -65,6 +68,9 @@ export const SuperAdminLayout: React.FC = () => {
     { to: '/super-admin/plans', label: 'Subscription Plans', icon: CreditCard },
     { to: '/super-admin/payments', label: 'Payment Approvals', icon: Receipt },
     { to: '/super-admin/analytics', label: 'Platform Analytics', icon: BarChart3 },
+    { to: '/super-admin/support', label: 'Support Tickets', icon: LifeBuoy },
+    { to: '/super-admin/audit-logs', label: 'Audit Logs', icon: History },
+    { to: '/super-admin/settings', label: 'Platform Settings', icon: Settings },
   ];
 
   const handleSignOut = async () => {

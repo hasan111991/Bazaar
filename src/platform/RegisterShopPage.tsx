@@ -11,12 +11,13 @@ import {
 import { useAuth } from '../context/AuthContext';
 import {
   PAKISTAN_CITIES,
+  BUSINESS_TYPE_OPTIONS,
   formatPKR,
   isValidPakistaniPhone,
   sanitizeShopSlug,
   isValidShopSlug,
 } from '../data/seedData';
-import { BillingCycle, PlatformSettings, SubscriptionPlan } from '../types';
+import { BillingCycle, BusinessType, PlatformSettings, SubscriptionPlan } from '../types';
 import {
   checkSlugAvailability,
   getPlatformSettings,
@@ -46,6 +47,7 @@ export const RegisterShopPage: React.FC = () => {
     checking: false,
   });
   const [ownerPhone, setOwnerPhone] = useState('');
+  const [businessType, setBusinessType] = useState<BusinessType>('general_store');
   const [city, setCity] = useState('Karachi');
   const [address, setAddress] = useState('');
 
@@ -153,6 +155,7 @@ export const RegisterShopPage: React.FC = () => {
         ownerPhone: ownerPhone.trim(),
         shopName: shopName.trim(),
         shopSlug,
+        businessType,
         city,
         address: address.trim(),
         planId: selectedPlanId,
@@ -356,7 +359,22 @@ export const RegisterShopPage: React.FC = () => {
                   </select>
                 </div>
 
-                <div className="sm:col-span-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Business Type *</label>
+                  <select
+                    value={businessType}
+                    onChange={(e) => setBusinessType(e.target.value as BusinessType)}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-[#065F46] focus:outline-none"
+                  >
+                    {BUSINESS_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Shop Address (also used for Self-Pickup counter) *
                   </label>
@@ -396,7 +414,7 @@ export const RegisterShopPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {plans.map((p) => {
                   const pPrice = billingCycle === 'yearly' ? p.yearlyPrice : p.monthlyPrice;
                   const active = selectedPlanId === p.id;
@@ -419,7 +437,8 @@ export const RegisterShopPage: React.FC = () => {
                         {pPrice === 0 ? 'Rs. 0 / Free' : `${formatPKR(pPrice)}/${billingCycle === 'yearly' ? 'yr' : 'mo'}`}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        {p.maxProducts} products · {p.maxStorageMB} MB · {p.maxStaff} staff
+                        {p.maxProducts === -1 ? 'Unlimited' : p.maxProducts}{' '}
+                        {p.maxProducts === 1 ? 'product' : 'products'} · {p.maxStorageMB} MB · {p.maxStaff} staff
                       </p>
                     </button>
                   );
@@ -431,10 +450,10 @@ export const RegisterShopPage: React.FC = () => {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="text-xs font-bold text-slate-900">
-                        Paid Tier Selected ({selectedPlan?.name} — {formatPKR(planAmount)})
+                        Paid Tier Requested ({selectedPlan?.name} — {formatPKR(planAmount)})
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        Your store starts immediately with a 14-day free trial. You may submit manual payment now for instant Super Admin review, or upgrade later from your dashboard.
+                        Your store provisions immediately on the active Free Plan (1 active product). Submit payment proof now or anytime in Dashboard -&gt; Subscription so Super Admin activates {selectedPlan?.name}.
                       </p>
                     </div>
                     <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">

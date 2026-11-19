@@ -157,6 +157,42 @@ export const ShopAppearancePage: React.FC = () => {
               />
             </div>
           </div>
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Business Hours</label>
+            <input
+              type="text"
+              value={form.businessHours || ''}
+              onChange={(e) => setForm({ ...form, businessHours: e.target.value })}
+              placeholder="Mon - Sat: 10:00 AM - 10:00 PM"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              Store SEO Title (Google Search &amp; OpenGraph)
+            </label>
+            <input
+              type="text"
+              maxLength={70}
+              value={form.seoTitle || ''}
+              onChange={(e) => setForm({ ...form, seoTitle: e.target.value })}
+              placeholder={`${form.siteName || 'Your Store'} – Online Store in ${form.city || 'Pakistan'}`}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block font-semibold text-slate-700 mb-1">
+              Store SEO Meta Description (max 160 chars)
+            </label>
+            <textarea
+              rows={2}
+              maxLength={160}
+              value={form.seoDescription || ''}
+              onChange={(e) => setForm({ ...form, seoDescription: e.target.value })}
+              placeholder="Describe your store, top categories, city & delivery/pickup options for Google Search..."
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
         </div>
 
         <ImageUploader

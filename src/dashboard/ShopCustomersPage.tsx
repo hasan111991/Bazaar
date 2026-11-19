@@ -1,23 +1,48 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Search, Loader2, Plus, BookOpen, X } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
-import { getShopCustomers } from '../services/tenantService';
+import {
+  getShopCustomersWithKhata,
+  saveShopCustomerProfile,
+} from '../services/retailService';
 import { ShopCustomerSummary } from '../types';
-import { formatPKR } from '../data/seedData';
+import { formatPKR, PAKISTAN_CITIES } from '../data/seedData';
 
 export const ShopCustomersPage: React.FC = () => {
-  const { shopId } = useDashboard();
+  const { shopId, isReadOnly, canUseFeature } = useDashboard();
   const [customers, setCustomers] = useState<ShopCustomerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', phone: '', city: 'Karachi', email: '', address: '', notes: '' });
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const loadCustomers = () => {
     if (!shopId) return;
     setLoading(true);
-    getShopCustomers(shopId)
+    getShopCustomersWithKhata(shopId)
       .then(setCustomers)
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadCustomers();
   }, [shopId]);
+
+  const handleSaveCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isReadOnly) return;
+    setSaving(true);
+    try {
+      await saveShopCustomerProfile(shopId, form);
+      setModalOpen(false);
+      setForm({ name: '', phone: '', city: 'Karachi', email: '', address: '', notes: '' });
+      loadCustomers();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const filtered = customers.filter(
     (c) =>
@@ -26,13 +51,41 @@ export const ShopCustomersPage: React.FC = () => {
       c.city.toLowerCase().includes(search.toLowerCase())
   );
 
+  const totalKhataReceivable = customers.reduce(
+    (s, c) => s + Math.max(0, Number(c.outstandingBalance || 0)),
+    0
+  );
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-extrabold text-slate-900">Store Customers</h2>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Tenant-isolated customer ledger derived from your store&apos;s orders.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900">Store Customers</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Tenant-isolated customer directory with online orders, POS visits, and Khata receivable balances.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2 self-start">
+          {canUseFeature('khata') && (
+            <Link
+              to="/dashboard/khata"
+              className="px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold flex items-center gap-1.5"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-[#065F46]" />
+              Khata Due: {formatPKR(totalKhataReceivable)}
+            </Link>
+          )}
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" /> Add Customer
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4">
@@ -64,7 +117,8 @@ export const ShopCustomersPage: React.FC = () => {
                   <th className="py-3 px-4">Phone &amp; City</th>
                   <th className="py-3 px-4 text-right">Orders</th>
                   <th className="py-3 px-4 text-right">Lifetime Value</th>
-                  <th className="py-3 px-4 text-right">Last Order</th>
+                  <th className="py-3 px-4 text-right">Khata Balance</th>
+                  <th className="py-3 px-4 text-right">Last Activity</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -72,7 +126,7 @@ export const ShopCustomersPage: React.FC = () => {
                   <tr key={c.id} className="hover:bg-slate-50/70">
                     <td className="py-3 px-4">
                       <p className="font-bold text-slate-900">{c.name}</p>
-                      <p className="text-[11px] text-slate-500">{c.email || 'Guest Checkout'}</p>
+                      <p className="text-[11px] text-slate-500">{c.email || 'Walk-in / Guest'}</p>
                     </td>
                     <td className="py-3 px-4">
                       <p className="font-mono text-slate-700">{c.phone}</p>
@@ -81,6 +135,11 @@ export const ShopCustomersPage: React.FC = () => {
                     <td className="py-3 px-4 text-right font-bold tabular-nums">{c.ordersCount}</td>
                     <td className="py-3 px-4 text-right font-extrabold text-[#065F46] tabular-nums">
                       {formatPKR(c.totalSpent)}
+                    </td>
+                    <td className="py-3 px-4 text-right font-extrabold tabular-nums">
+                      <span className={(c.outstandingBalance || 0) > 0 ? 'text-rose-700' : 'text-slate-400'}>
+                        {formatPKR(c.outstandingBalance || 0)}
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-right text-slate-500">
                       {new Date(c.lastOrderAt).toLocaleDateString()}
@@ -92,6 +151,91 @@ export const ShopCustomersPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveCustomer}
+            className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4 text-xs"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-extrabold text-slate-900">Add Customer Profile</h3>
+              <button type="button" onClick={() => setModalOpen(false)}>
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Full Name *</label>
+              <input
+                type="text"
+                required
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Mobile Number *</label>
+              <input
+                type="tel"
+                required
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="03001234567"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">City</label>
+                <select
+                  value={form.city}
+                  onChange={(e) => setForm({ ...form, city: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
+                >
+                  {PAKISTAN_CITIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Email (Optional)</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Address / Notes</label>
+              <input
+                type="text"
+                value={form.address}
+                onChange={(e) => setForm({ ...form, address: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="px-4 py-2 border border-slate-200 rounded-lg font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-5 py-2 bg-[#065F46] text-white rounded-lg font-bold"
+              >
+                {saving ? 'Saving...' : 'Save Customer'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

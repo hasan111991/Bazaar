@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../context/TenantContext';
 import { useToast } from '../components/common/Toast';
 import { ProductCard } from '../components/common/ProductCard';
+import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
 
 export const ProductDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,7 +39,7 @@ export const ProductDetailPage: React.FC = () => {
   const { addToCart, setCartDrawerOpen } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { currentUser } = useAuth();
-  const { shopId, settings, storeBasePath } = useTenant();
+  const { shopId, shop, settings, storeBasePath } = useTenant();
   const { showToast } = useToast();
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -197,6 +198,7 @@ export const ProductDetailPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8 space-y-10 sm:space-y-12">
+      <DynamicSeoHead shop={shop} settings={settings} product={product} />
       {/* Breadcrumb */}
       <nav className="text-xs text-slate-400 flex items-center gap-2 overflow-x-auto whitespace-nowrap">
         <Link to={storeBasePath} className="hover:text-emerald-700">Home</Link>

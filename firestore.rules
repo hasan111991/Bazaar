@@ -139,8 +139,9 @@ service cloud.firestore {
     function isValidShopPublicDoc(data, shopId) {
       return data.keys().hasAll(['id', 'slug', 'name', 'status']) &&
         data.keys().hasOnly([
-          'id', 'slug', 'name', 'logoUrl', 'city',
+          'id', 'slug', 'name', 'businessType', 'logoUrl', 'city',
           'publicContactPhone', 'publicSupportEmail', 'storefrontAddress',
+          'businessHours', 'seoTitle', 'seoDescription',
           'theme', 'status', 'createdAt', 'updatedAt'
         ]) &&
         data.id == shopId &&
@@ -197,6 +198,20 @@ service cloud.firestore {
         )
       );
       allow update, delete: if isSuperAdmin();
+    }
+
+    match /support_tickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (
+        isSuperAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(ticketId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'open' &&
+        incoming().subject is string && incoming().subject.size() >= 1 && incoming().subject.size() <= 200 &&
+        incoming().message is string && incoming().message.size() >= 1 && incoming().message.size() <= 4000;
+      allow update, delete: if isValidId(ticketId) && isSuperAdmin();
     }
 
     // ====================================================
@@ -256,7 +271,8 @@ service cloud.firestore {
     // ====================================================
 
     match /shops_public/{shopId} {
-      allow get, list: if isValidId(shopId) || resource.data.status == 'active';
+      allow get: if isValidId(shopId);
+      allow list: if resource.data.status == 'active' || isSuperAdmin();
       allow create: if isValidId(shopId) && isValidShopPublicDoc(incoming(), shopId) && (
         isSuperAdmin() || (
           isSignedIn() &&
@@ -385,7 +401,13 @@ service cloud.firestore {
       match /products/{productId} {
         allow get: if isValidId(productId) && ((resource.data.isPublished == true) || hasShopPermission(shopId, 'products') || isShopMember(shopId));
         allow list: if (resource.data.isPublished == true) || isShopMember(shopId);
-        allow create, update, delete: if isValidId(productId) && hasShopPermission(shopId, 'products');
+        allow create, delete: if isValidId(productId) && hasShopPermission(shopId, 'products');
+        allow update: if isValidId(productId) && (
+          hasShopPermission(shopId, 'products') ||
+          hasShopPermission(shopId, 'inventory') ||
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'purchases')
+        );
       }
 
       // Shop Categories
@@ -511,7 +533,73 @@ service cloud.firestore {
 
       // Shop Customers Directory
       match /customers/{customerId} {
-        allow read, write: if isValidId(customerId) && hasShopPermission(shopId, 'customers');
+        allow read: if isValidId(customerId) && (
+          hasShopPermission(shopId, 'customers') ||
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'khata') ||
+          isShopMember(shopId)
+        );
+        allow write: if isValidId(customerId) && (
+          hasShopPermission(shopId, 'customers') ||
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'khata')
+        );
+      }
+
+      // Stage 1 Retail Operations Subcollections (Strictly Tenant-Isolated)
+      match /suppliers/{supplierId} {
+        allow read: if isShopMember(shopId);
+        allow write: if isValidId(supplierId) && (
+          hasShopPermission(shopId, 'suppliers') ||
+          hasShopPermission(shopId, 'inventory') ||
+          isShopAdmin(shopId)
+        );
+      }
+
+      match /purchases/{purchaseId} {
+        allow read: if isShopMember(shopId);
+        allow write: if isValidId(purchaseId) && (
+          hasShopPermission(shopId, 'purchases') ||
+          hasShopPermission(shopId, 'inventory') ||
+          isShopAdmin(shopId)
+        );
+      }
+
+      match /pos_sales/{saleId} {
+        allow read: if isShopMember(shopId);
+        allow write: if isValidId(saleId) && (
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'orders') ||
+          isShopAdmin(shopId)
+        );
+      }
+
+      match /stock_movements/{movementId} {
+        allow read: if isShopMember(shopId);
+        allow write: if isValidId(movementId) && (
+          hasShopPermission(shopId, 'inventory') ||
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'purchases') ||
+          isShopAdmin(shopId)
+        );
+      }
+
+      match /khata_ledger/{entryId} {
+        allow read: if isShopMember(shopId);
+        allow write: if isValidId(entryId) && (
+          hasShopPermission(shopId, 'khata') ||
+          hasShopPermission(shopId, 'customers') ||
+          hasShopPermission(shopId, 'pos') ||
+          isShopAdmin(shopId)
+        );
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if isShopMember(shopId);
+        allow write: if isValidId(expenseId) && (
+          hasShopPermission(shopId, 'reports') ||
+          isShopAdmin(shopId)
+        );
       }
 
       // Shop Notifications & Activity Logs

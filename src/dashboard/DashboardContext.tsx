@@ -16,7 +16,12 @@ import {
   INITIAL_SETTINGS,
   DEFAULT_SHOP_ID,
 } from '../data/seedData';
-import { getShopById, getSubscriptionPlans, getShopSubscriptionStatus } from '../services/platformService';
+import {
+  getShopById,
+  getSubscriptionPlans,
+  getShopSubscriptionStatus,
+  getPlatformSettings,
+} from '../services/platformService';
 import { getShopSettings } from '../services/tenantService';
 
 interface DashboardContextType {
@@ -49,6 +54,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [shop, setShop] = useState<Shop | null>(null);
   const [settings, setSettings] = useState<StoreSettings>(INITIAL_SETTINGS);
   const [plan, setPlan] = useState<SubscriptionPlan>(DEFAULT_SUBSCRIPTION_PLANS[0]);
+  const [gracePeriodDays, setGracePeriodDays] = useState<number>(5);
   const [userRole, setUserRole] = useState<StaffRole>('shop_owner');
   const [permissions, setPermissions] = useState<StaffPermission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,14 +68,18 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setLoading(true);
     try {
-      const [s, stg, plans] = await Promise.all([
+      const [s, stg, plans, platformCfg] = await Promise.all([
         getShopById(resolvedShopId),
         getShopSettings(resolvedShopId),
         getSubscriptionPlans(),
+        getPlatformSettings().catch(() => null),
       ]);
 
       setShop(s);
       setSettings(stg);
+      if (platformCfg?.gracePeriodDays !== undefined) {
+        setGracePeriodDays(platformCfg.gracePeriodDays);
+      }
 
       const matchedPlan =
         plans.find((p) => p.id === s?.subscription?.planId) ||
@@ -98,7 +108,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     loadWorkspace();
   }, [loadWorkspace]);
 
-  const { isSuspended, isExpired } = getShopSubscriptionStatus(shop);
+  const { isSuspended, isExpired } = getShopSubscriptionStatus(shop, gracePeriodDays);
 
   const hasPermission = (perm: StaffPermission): boolean => {
     if (isInspecting || isSuperAdmin || userRole === 'shop_owner' || userRole === 'shop_admin') {

@@ -2,13 +2,19 @@ export type UserRole = 'customer' | 'shop_owner' | 'shop_admin' | 'shop_staff' |
 
 export type StaffRole = 'shop_owner' | 'shop_admin' | 'shop_staff';
 
+export type BusinessType = 'general_store' | 'cosmetics' | 'clothing' | 'other_retail';
+
 export type StaffPermission =
   | 'overview'
+  | 'pos'
   | 'products'
   | 'categories'
   | 'orders'
   | 'customers'
+  | 'khata'
   | 'inventory'
+  | 'purchases'
+  | 'suppliers'
   | 'coupons'
   | 'banners'
   | 'appearance'
@@ -62,6 +68,13 @@ export interface PlanFeatures {
   buyingGuide: boolean;
   staffAccounts: boolean;
   customPages: boolean;
+  pos: boolean;
+  barcode: boolean;
+  suppliersPurchases: boolean;
+  khata: boolean;
+  advancedInventory: boolean;
+  advancedReports: boolean;
+  prioritySupport?: boolean;
 }
 
 export interface SubscriptionPlan {
@@ -72,7 +85,7 @@ export interface SubscriptionPlan {
   monthlyPrice: number;
   yearlyPrice: number;
   durationDays: number;
-  maxProducts: number;
+  maxProducts: number; // -1 means unlimited active products
   maxStorageMB: number;
   maxStaff: number;
   features: PlanFeatures;
@@ -115,6 +128,7 @@ export interface Shop {
   id: string;
   slug: string;
   name: string;
+  businessType?: BusinessType;
   ownerId: string;
   ownerName: string;
   ownerEmail: string;
@@ -126,6 +140,9 @@ export interface Shop {
   subscription: ShopSubscription;
   usage: ShopUsage;
   theme?: ShopTheme;
+  adminNotes?: string;
+  onboardingChecklist?: Record<string, boolean>;
+  defaultBranchId?: string;
   lastActivityAt?: string;
   createdAt: string;
   updatedAt?: string;
@@ -135,11 +152,15 @@ export interface ShopPublic {
   id: string;
   slug: string;
   name: string;
+  businessType?: BusinessType;
   logoUrl?: string;
   city?: string;
   publicContactPhone?: string;
   publicSupportEmail?: string;
   storefrontAddress?: string;
+  businessHours?: string;
+  seoTitle?: string;
+  seoDescription?: string;
   status: ShopStatus;
   theme?: ShopTheme;
   createdAt?: string;
@@ -219,6 +240,7 @@ export interface PlatformSettings {
     accountNumber: string;
     iban: string;
   };
+  gracePeriodDays?: number;
   updatedAt?: string;
 }
 
@@ -227,7 +249,21 @@ export interface ActivityLog {
   actorId: string;
   actorEmail: string;
   action: string;
-  targetType: 'shop' | 'plan' | 'payment' | 'product' | 'order' | 'staff' | 'settings' | 'migration';
+  targetType:
+    | 'shop'
+    | 'plan'
+    | 'payment'
+    | 'product'
+    | 'order'
+    | 'pos'
+    | 'purchase'
+    | 'supplier'
+    | 'khata'
+    | 'expense'
+    | 'staff'
+    | 'settings'
+    | 'ticket'
+    | 'migration';
   targetId: string;
   details: string;
   createdAt: string;
@@ -256,9 +292,12 @@ export interface ShopCustomerSummary {
   name: string;
   email: string;
   phone: string;
+  address?: string;
   city: string;
   ordersCount: number;
   totalSpent: number;
+  outstandingBalance?: number;
+  notes?: string;
   lastOrderAt: string;
   createdAt: string;
 }
@@ -266,22 +305,48 @@ export interface ShopCustomerSummary {
 export interface ProductVariant {
   name: string;
   options: string[];
+  sku?: string;
+  stock?: number;
 }
+
+export type ProductUnit =
+  | 'Piece'
+  | 'KG'
+  | 'Gram'
+  | 'Litre'
+  | 'Millilitre'
+  | 'Packet'
+  | 'Carton'
+  | 'Box'
+  | 'Dozen'
+  | 'Set';
 
 export interface Product {
   id: string;
   shopId?: string;
+  branchId?: string;
   title: string;
   slug: string;
   description: string;
+  purchasePrice?: number;
   regularPrice: number;
   salePrice?: number;
   stock: number;
+  minStockAlert?: number;
+  unit?: ProductUnit | string;
   category: string;
   brand: string;
   images: string[];
   sku: string;
+  barcode?: string;
   variants?: ProductVariant[];
+  // Business-type-specific optional attributes
+  shade?: string;
+  variantSize?: string;
+  skinHairCategory?: string;
+  color?: string;
+  designRef?: string;
+  status?: 'active' | 'archived';
   isFeatured: boolean;
   isPublished: boolean;
   rating: number;
@@ -457,6 +522,9 @@ export interface StoreSettings {
   currency: string;
   currencySymbol: string;
   aboutUs?: string;
+  businessHours?: string;
+  seoTitle?: string;
+  seoDescription?: string;
   bankDetails: {
     bankName: string;
     accountTitle: string;
@@ -534,4 +602,165 @@ export interface MigrationResult {
   errors: string[];
   backupJson: string;
   timestamp: string;
+}
+
+// ====================================================
+// STAGE 1 RETAIL SaaS MODULES: POS, SUPPLIERS, PURCHASES, KHATA, EXPENSES & SUPPORT
+// ====================================================
+
+export type StockMovementType =
+  | 'stock_in'
+  | 'stock_out'
+  | 'opening'
+  | 'damaged'
+  | 'wastage'
+  | 'adjustment'
+  | 'pos_sale'
+  | 'purchase'
+  | 'online_order'
+  | 'return';
+
+export interface StockMovement {
+  id: string;
+  shopId: string;
+  branchId?: string;
+  productId: string;
+  productTitle: string;
+  type: StockMovementType;
+  quantityChange: number;
+  previousQuantity: number;
+  newQuantity: number;
+  reason: string;
+  userId: string;
+  userEmail?: string;
+  referenceTransaction?: string;
+  timestamp: string;
+}
+
+export interface Supplier {
+  id: string;
+  shopId: string;
+  name: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  openingBalance: number;
+  currentPayableBalance: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface PurchaseItemLine {
+  productId: string;
+  productTitle: string;
+  sku?: string;
+  quantity: number;
+  purchasePrice: number;
+  lineTotal: number;
+}
+
+export interface PurchaseInvoice {
+  id: string;
+  shopId: string;
+  branchId?: string;
+  supplierId: string;
+  supplierName: string;
+  invoiceNumber: string;
+  purchaseDate: string;
+  items: PurchaseItemLine[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  paidAmount: number;
+  remainingPayable: number;
+  paymentStatus: 'paid' | 'partial' | 'unpaid';
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type PosPaymentMethod = 'cash' | 'bank_transfer' | 'qr_payment' | 'khata_credit' | 'split';
+
+export interface PosSaleItem {
+  productId: string;
+  title: string;
+  sku?: string;
+  barcode?: string;
+  unitPrice: number;
+  costPrice: number;
+  quantity: number;
+  lineTotal: number;
+}
+
+export interface PosSale {
+  id: string;
+  shopId: string;
+  branchId?: string;
+  invoiceNumber: string;
+  idempotencyKey: string;
+  items: PosSaleItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  paymentMethod: PosPaymentMethod;
+  cashPaid?: number;
+  digitalPaid?: number;
+  creditAmount?: number;
+  paymentReference?: string;
+  customerId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  cashierId: string;
+  cashierName: string;
+  status: 'completed' | 'returned' | 'exchanged';
+  receiptFormat?: '58mm' | '80mm';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface KhataEntry {
+  id: string;
+  shopId: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  type: 'credit_sale' | 'payment' | 'adjustment';
+  amount: number;
+  previousBalance: number;
+  newBalance: number;
+  reference?: string;
+  notes?: string;
+  recordedBy: string;
+  createdAt: string;
+}
+
+export interface ShopExpense {
+  id: string;
+  shopId: string;
+  branchId?: string;
+  title: string;
+  category: 'rent' | 'utilities' | 'salaries' | 'packaging' | 'transport' | 'marketing' | 'other';
+  amount: number;
+  date: string;
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  shopId?: string;
+  shopName?: string;
+  userId: string;
+  userEmail: string;
+  subject: string;
+  category: 'billing' | 'technical' | 'onboarding' | 'feature' | 'other';
+  priority: 'low' | 'medium' | 'high';
+  message: string;
+  status: 'open' | 'in_progress' | 'resolved';
+  adminReply?: string;
+  createdAt: string;
+  updatedAt?: string;
 }

@@ -17,6 +17,7 @@ import {
   assignShopSubscription,
   extendShopSubscription,
   deleteShopComplete,
+  updateShopAdminNotes,
 } from '../services/platformService';
 import {
   getShopProductsAdmin,
@@ -38,7 +39,7 @@ import {
   SubscriptionPlan,
   PlatformPayment,
 } from '../types';
-import { formatPKR } from '../data/seedData';
+import { formatPKR, BUSINESS_TYPE_OPTIONS } from '../data/seedData';
 
 const TABS = [
   'Overview',
@@ -72,8 +73,11 @@ export const SuperAdminShopDetailPage: React.FC = () => {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [payments, setPayments] = useState<PlatformPayment[]>([]);
 
-  const [selectedPlanId, setSelectedPlanId] = useState('growth-plus');
+  const [selectedPlanId, setSelectedPlanId] = useState('starter');
   const [freeComp, setFreeComp] = useState(false);
+  const [adminNotes, setAdminNotes] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [confirmDeleteSlug, setConfirmDeleteSlug] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -102,6 +106,7 @@ export const SuperAdminShopDetailPage: React.FC = () => {
       setLogs(lg);
       setPayments(pays);
       if (s?.subscription?.planId) setSelectedPlanId(s.subscription.planId);
+      setAdminNotes(s?.adminNotes || '');
     } finally {
       setLoading(false);
     }
@@ -188,40 +193,74 @@ export const SuperAdminShopDetailPage: React.FC = () => {
       {/* Tab Content */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 text-xs">
         {tab === 'Overview' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <h3 className="text-sm font-bold text-slate-900">Store Profile</h3>
-              <div className="space-y-2 text-slate-700">
-                <p><strong>Shop ID:</strong> <span className="font-mono">{shop.id}</span></p>
-                <p><strong>Storefront URL:</strong> <span className="font-mono">/s/{shop.slug}</span></p>
-                <p><strong>Owner Name:</strong> {shop.ownerName}</p>
-                <p><strong>Owner Email:</strong> {shop.ownerEmail}</p>
-                <p><strong>Phone:</strong> {shop.ownerPhone}</p>
-                <p><strong>City / Address:</strong> {shop.city} — {shop.address}</p>
-                <p><strong>Registered:</strong> {new Date(shop.createdAt).toLocaleString()}</p>
-                <p><strong>Last Activity:</strong> {shop.lastActivityAt ? new Date(shop.lastActivityAt).toLocaleString() : 'N/A'}</p>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold text-slate-900">Store Profile</h3>
+                <div className="space-y-2 text-slate-700">
+                  <p><strong>Shop ID:</strong> <span className="font-mono">{shop.id}</span></p>
+                  <p><strong>Store Type:</strong> {BUSINESS_TYPE_OPTIONS.find((b) => b.value === (shop.businessType || 'general_store'))?.label || 'General Store'}</p>
+                  <p><strong>Storefront URL:</strong> <span className="font-mono">/s/{shop.slug}</span></p>
+                  <p><strong>Owner Name:</strong> {shop.ownerName}</p>
+                  <p><strong>Owner Email:</strong> {shop.ownerEmail}</p>
+                  <p><strong>Phone:</strong> {shop.ownerPhone}</p>
+                  <p><strong>City / Address:</strong> {shop.city} — {shop.address}</p>
+                  <p><strong>Registered:</strong> {new Date(shop.createdAt).toLocaleString()}</p>
+                  <p><strong>Last Activity:</strong> {shop.lastActivityAt ? new Date(shop.lastActivityAt).toLocaleString() : 'N/A'}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 self-start">
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <p className="text-slate-500">Live Products</p>
+                  <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{products.length}</p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <p className="text-slate-500">Total Orders</p>
+                  <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{orders.length}</p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <p className="text-slate-500">Unique Customers</p>
+                  <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{customers.length}</p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <p className="text-slate-500">Gross Revenue</p>
+                  <p className="text-lg font-extrabold text-[#065F46] mt-1 tabular-nums">
+                    {formatPKR(orders.filter((o) => o.orderStatus !== 'Cancelled').reduce((s, o) => s + Number(o.total || 0), 0))}
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 self-start">
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <p className="text-slate-500">Live Products</p>
-                <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{products.length}</p>
+            <div className="pt-4 border-t border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-900">Internal Super Admin Notes</h4>
+                {notesSaved && <span className="text-emerald-700 font-semibold">Saved</span>}
               </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <p className="text-slate-500">Total Orders</p>
-                <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{orders.length}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <p className="text-slate-500">Unique Customers</p>
-                <p className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">{customers.length}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <p className="text-slate-500">Gross Revenue</p>
-                <p className="text-lg font-extrabold text-[#065F46] mt-1 tabular-nums">
-                  {formatPKR(orders.filter((o) => o.orderStatus !== 'Cancelled').reduce((s, o) => s + Number(o.total || 0), 0))}
-                </p>
-              </div>
+              <textarea
+                rows={3}
+                value={adminNotes}
+                onChange={(e) => setAdminNotes(e.target.value)}
+                placeholder="Private platform verification notes, manual payment remarks, or compliance history..."
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+              />
+              <button
+                type="button"
+                disabled={savingNotes}
+                onClick={async () => {
+                  setSavingNotes(true);
+                  setNotesSaved(false);
+                  try {
+                    await updateShopAdminNotes(shop.id, adminNotes);
+                    setNotesSaved(true);
+                  } finally {
+                    setSavingNotes(false);
+                  }
+                }}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold"
+              >
+                {savingNotes ? 'Saving Notes...' : 'Save Internal Notes'}
+              </button>
             </div>
           </div>
         )}

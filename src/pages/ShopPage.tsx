@@ -15,9 +15,10 @@ import { QuickViewModal } from '../components/common/QuickViewModal';
 import { MarketBuyingGuide } from '../components/shop/MarketBuyingGuide';
 import { formatPKR, DEFAULT_SHOP_ID, INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
+import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
 
 export const ShopPage: React.FC = () => {
-  const { shopId, settings, plan } = useTenant();
+  const { shopId, shop, settings, plan } = useTenant();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -133,8 +134,18 @@ export const ShopPage: React.FC = () => {
     setSearchParams({});
   };
 
+  const activeCategoryName = selectedCategory
+    ? categories.find((c) => c.slug === selectedCategory)?.name || selectedCategory
+    : undefined;
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
+      <DynamicSeoHead
+        shop={shop}
+        settings={settings}
+        categoryName={activeCategoryName}
+        searchQuery={searchQuery.trim() || undefined}
+      />
       {/* Top Breadcrumb & Title */}
       <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>

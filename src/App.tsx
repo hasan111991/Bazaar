@@ -7,6 +7,7 @@ import {
   Link,
   Navigate,
   useParams,
+  useLocation,
 } from 'react-router-dom';
 import { getRouterBasename } from './utils/tenantDomain';
 import { Store, ShieldAlert, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
@@ -29,6 +30,9 @@ import { SuperAdminShopDetailPage } from './superadmin/SuperAdminShopDetailPage'
 import { SuperAdminPlansPage } from './superadmin/SuperAdminPlansPage';
 import { SuperAdminPaymentsPage } from './superadmin/SuperAdminPaymentsPage';
 import { SuperAdminAnalyticsPage } from './superadmin/SuperAdminAnalyticsPage';
+import { SuperAdminSupportPage } from './superadmin/SuperAdminSupportPage';
+import { SuperAdminAuditLogsPage } from './superadmin/SuperAdminAuditLogsPage';
+import { SuperAdminSettingsPage } from './superadmin/SuperAdminSettingsPage';
 
 // Layer 3: Merchant Shop Dashboard
 import { ShopDashboardLayout } from './dashboard/ShopDashboardLayout';
@@ -38,6 +42,10 @@ import { ShopCategoriesPage } from './dashboard/ShopCategoriesPage';
 import { ShopOrdersPage } from './dashboard/ShopOrdersPage';
 import { ShopCustomersPage } from './dashboard/ShopCustomersPage';
 import { ShopInventoryPage } from './dashboard/ShopInventoryPage';
+import { ShopPosPage } from './dashboard/ShopPosPage';
+import { ShopPurchasesPage } from './dashboard/ShopPurchasesPage';
+import { ShopSuppliersPage } from './dashboard/ShopSuppliersPage';
+import { ShopKhataPage } from './dashboard/ShopKhataPage';
 import { ShopCouponsPage } from './dashboard/ShopCouponsPage';
 import { ShopBannersPage } from './dashboard/ShopBannersPage';
 import { ShopAppearancePage } from './dashboard/ShopAppearancePage';
@@ -52,6 +60,7 @@ import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
 import { CartDrawer } from './components/common/CartDrawer';
 import { WhatsAppButton } from './components/common/WhatsAppButton';
+import { DynamicSeoHead } from './components/common/DynamicSeoHead';
 import { HomePage } from './pages/HomePage';
 import { ShopPage } from './pages/ShopPage';
 import { ProductDetailPage } from './pages/ProductDetailPage';
@@ -71,7 +80,12 @@ import {
 import { DEFAULT_SHOP_ID } from './data/seedData';
 
 const StorefrontLayout: React.FC = () => {
-  const { loading, notFound, isSuspended, shopSlug, settings, storeBasePath } = useTenant();
+  const { loading, notFound, isSuspended, shopSlug, shop, settings, storeBasePath } = useTenant();
+  const { pathname } = useLocation();
+  const hasChildSeo =
+    pathname.includes('/product/') ||
+    pathname.endsWith('/shop') ||
+    /\/(about|faq|return-policy|terms|privacy)$/.test(pathname);
 
   if (loading) {
     return (
@@ -144,6 +158,7 @@ const StorefrontLayout: React.FC = () => {
       className="min-h-screen flex flex-col bg-slate-50 text-slate-800 antialiased selection:bg-emerald-600 selection:text-white"
       data-store-path={storeBasePath}
     >
+      {!hasChildSeo && <DynamicSeoHead shop={shop} settings={settings} />}
       <Header />
       <main className="flex-1">
         <Outlet />
@@ -257,16 +272,23 @@ export default function App() {
                 <Route path="plans" element={<SuperAdminPlansPage />} />
                 <Route path="payments" element={<SuperAdminPaymentsPage />} />
                 <Route path="analytics" element={<SuperAdminAnalyticsPage />} />
+                <Route path="support" element={<SuperAdminSupportPage />} />
+                <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
+                <Route path="settings" element={<SuperAdminSettingsPage />} />
               </Route>
 
               {/* Layer 3: Shop Admin Management Portal */}
               <Route path="/dashboard" element={<ShopDashboardLayout />}>
                 <Route index element={<ShopOverviewPage />} />
+                <Route path="pos" element={<ShopPosPage />} />
                 <Route path="products" element={<ShopProductsPage />} />
                 <Route path="categories" element={<ShopCategoriesPage />} />
                 <Route path="orders" element={<ShopOrdersPage />} />
                 <Route path="customers" element={<ShopCustomersPage />} />
+                <Route path="khata" element={<ShopKhataPage />} />
                 <Route path="inventory" element={<ShopInventoryPage />} />
+                <Route path="purchases" element={<ShopPurchasesPage />} />
+                <Route path="suppliers" element={<ShopSuppliersPage />} />
                 <Route path="coupons" element={<ShopCouponsPage />} />
                 <Route path="banners" element={<ShopBannersPage />} />
                 <Route path="appearance" element={<ShopAppearancePage />} />

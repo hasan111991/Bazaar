@@ -18,6 +18,7 @@ import { SubscriptionPlan, ShopPublic } from '../types';
 import { formatPKR, DEFAULT_SHOP_ID } from '../data/seedData';
 import { getSubscriptionPlans, getActiveDirectoryShopsPublic } from '../services/platformService';
 import { useAuth } from '../context/AuthContext';
+import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
 
 export const PlatformLandingPage: React.FC = () => {
   const { currentUser, isSuperAdmin, shopMemberships } = useAuth();
@@ -32,6 +33,7 @@ export const PlatformLandingPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-slate-900 flex flex-col">
+      <DynamicSeoHead mode="platform" />
       {/* Top Navigation */}
       <header className="sticky top-0 z-40 bg-[#FAF9F6]/90 backdrop-blur border-b border-slate-200/80">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
@@ -290,7 +292,7 @@ export const PlatformLandingPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {plans.map((plan) => {
             const price = billingCycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice;
             return (
@@ -301,7 +303,7 @@ export const PlatformLandingPage: React.FC = () => {
                 }`}
               >
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <h3 className="text-lg font-extrabold text-slate-900">{plan.name}</h3>
                     {plan.isPopular && (
                       <span className="text-[11px] font-bold uppercase tracking-wider text-[#065F46]">
@@ -325,7 +327,16 @@ export const PlatformLandingPage: React.FC = () => {
                   <ul className="space-y-2.5 text-xs text-slate-700">
                     <li className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-[#065F46] shrink-0" />
-                      <span>Up to <strong className="tabular-nums">{plan.maxProducts}</strong> Products</span>
+                      <span>
+                        {plan.maxProducts === -1 ? (
+                          <strong>Unlimited Active Products</strong>
+                        ) : (
+                          <>
+                            Up to <strong className="tabular-nums">{plan.maxProducts}</strong> Active{' '}
+                            {plan.maxProducts === 1 ? 'Product' : 'Products'}
+                          </>
+                        )}
+                      </span>
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-[#065F46] shrink-0" />
@@ -339,16 +350,22 @@ export const PlatformLandingPage: React.FC = () => {
                       <Check className="w-4 h-4 text-[#065F46] shrink-0" />
                       <span>COD, EasyPaisa, JazzCash &amp; Self-Pickup</span>
                     </li>
-                    {plan.features?.coupons && (
+                    {plan.features?.pos && (
                       <li className="flex items-center gap-2">
                         <Check className="w-4 h-4 text-[#065F46] shrink-0" />
-                        <span>Discount Coupons &amp; Promo Vouchers</span>
+                        <span>POS Counter &amp; Thermal Receipts</span>
                       </li>
                     )}
-                    {plan.features?.analytics && (
+                    {plan.features?.khata && (
                       <li className="flex items-center gap-2">
                         <Check className="w-4 h-4 text-[#065F46] shrink-0" />
-                        <span>Sales Reports &amp; Buying Guide AI</span>
+                        <span>Suppliers, Purchases &amp; Khata Ledger</span>
+                      </li>
+                    )}
+                    {plan.features?.advancedReports && (
+                      <li className="flex items-center gap-2">
+                        <Check className="w-4 h-4 text-[#065F46] shrink-0" />
+                        <span>COGS, Expenses &amp; Net Profit Reports</span>
                       </li>
                     )}
                   </ul>
@@ -362,7 +379,7 @@ export const PlatformLandingPage: React.FC = () => {
                       : 'bg-slate-900 hover:bg-slate-800 text-white'
                   }`}
                 >
-                  {price === 0 ? 'Start Free Store' : 'Start 14-Day Trial'}
+                  {price === 0 ? 'Start Free Forever' : `Choose ${plan.name}`}
                 </Link>
               </div>
             );

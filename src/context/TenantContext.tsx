@@ -41,6 +41,12 @@ export const TenantProvider: React.FC<{
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
+  const flagshipPlan =
+    DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'professional') ||
+    DEFAULT_SUBSCRIPTION_PLANS[DEFAULT_SUBSCRIPTION_PLANS.length - 1];
+  const starterPlan =
+    DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'starter') || DEFAULT_SUBSCRIPTION_PLANS[1];
+
   const loadTenant = useCallback(async () => {
     setLoading(true);
     setNotFound(false);
@@ -56,10 +62,14 @@ export const TenantProvider: React.FC<{
             id: DEFAULT_SHOP_ID,
             slug: DEFAULT_SHOP_ID,
             name: INITIAL_SETTINGS.siteName,
+            businessType: 'general_store',
             city: 'Karachi',
             publicContactPhone: INITIAL_SETTINGS.contactPhone,
             publicSupportEmail: INITIAL_SETTINGS.contactEmail,
             storefrontAddress: INITIAL_SETTINGS.address,
+            businessHours: INITIAL_SETTINGS.businessHours,
+            seoTitle: INITIAL_SETTINGS.seoTitle,
+            seoDescription: INITIAL_SETTINGS.seoDescription,
             status: 'active',
             theme: {
               primaryColor: INITIAL_SETTINGS.primaryColor || '#065f46',
@@ -70,7 +80,7 @@ export const TenantProvider: React.FC<{
             createdAt: new Date().toISOString(),
           });
           setSettings(INITIAL_SETTINGS);
-          setPlan(DEFAULT_SUBSCRIPTION_PLANS[2]);
+          setPlan(flagshipPlan);
           setLoading(false);
           return;
         }
@@ -88,11 +98,11 @@ export const TenantProvider: React.FC<{
         resolvedShop.id === DEFAULT_SHOP_ID || Boolean(resolvedShop.theme?.showBuyingGuide);
       const basePlan =
         resolvedShop.id === DEFAULT_SHOP_ID
-          ? DEFAULT_SUBSCRIPTION_PLANS[2]
+          ? flagshipPlan
           : {
-              ...DEFAULT_SUBSCRIPTION_PLANS[1],
+              ...starterPlan,
               features: {
-                ...DEFAULT_SUBSCRIPTION_PLANS[1].features,
+                ...starterPlan.features,
                 buyingGuide: showGuide,
               },
             };
@@ -102,7 +112,7 @@ export const TenantProvider: React.FC<{
     } finally {
       setLoading(false);
     }
-  }, [targetSlug, shopIdOverride]);
+  }, [targetSlug, shopIdOverride, flagshipPlan, starterPlan]);
 
   useEffect(() => {
     loadTenant();
@@ -143,7 +153,9 @@ export const useTenant = () => {
       shopSlug: DEFAULT_SHOP_ID,
       shop: null,
       settings: INITIAL_SETTINGS,
-      plan: DEFAULT_SUBSCRIPTION_PLANS[2],
+      plan:
+        DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'professional') ||
+        DEFAULT_SUBSCRIPTION_PLANS[DEFAULT_SUBSCRIPTION_PLANS.length - 1],
       loading: false,
       notFound: false,
       isSuspended: false,

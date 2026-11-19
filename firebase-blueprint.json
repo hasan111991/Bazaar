@@ -83,6 +83,7 @@
         "id": { "type": "string" },
         "slug": { "type": "string" },
         "name": { "type": "string" },
+        "businessType": { "type": "string", "enum": ["general_store", "cosmetics", "clothing", "other_retail"] },
         "ownerId": { "type": "string" },
         "ownerName": { "type": "string" },
         "ownerEmail": { "type": "string" },
@@ -94,6 +95,8 @@
         "subscription": { "type": "object" },
         "usage": { "type": "object" },
         "theme": { "type": "object" },
+        "onboardingChecklist": { "type": "object" },
+        "adminNotes": { "type": "string" },
         "lastActivityAt": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
@@ -108,11 +111,15 @@
         "id": { "type": "string" },
         "slug": { "type": "string" },
         "name": { "type": "string" },
+        "businessType": { "type": "string", "enum": ["general_store", "cosmetics", "clothing", "other_retail"] },
         "logoUrl": { "type": "string" },
         "city": { "type": "string" },
         "publicContactPhone": { "type": "string" },
         "publicSupportEmail": { "type": "string" },
         "storefrontAddress": { "type": "string" },
+        "businessHours": { "type": "string" },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "inactive", "suspended"] },
         "theme": { "type": "object" },
         "createdAt": { "type": "string" },
@@ -166,6 +173,55 @@
         "createdAt": { "type": "string" }
       },
       "required": ["uid", "email"]
+    },
+    "SupportTicket": {
+      "title": "Platform Support Ticket",
+      "description": "Merchant support request routed to Super Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "shopName": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "in_progress", "resolved"] },
+        "adminReply": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "subject", "message", "status"]
+    },
+    "Supplier": {
+      "title": "Shop Supplier",
+      "description": "Wholesale vendor with payable balance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "currentPayableBalance": { "type": "number" }
+      },
+      "required": ["id", "shopId", "name"]
+    },
+    "PosSale": {
+      "title": "POS Counter Sale",
+      "description": "Idempotent counter billing invoice with payment split and return state",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "idempotencyKey": { "type": "string" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string", "enum": ["completed", "returned"] }
+      },
+      "required": ["id", "shopId", "invoiceNumber", "idempotencyKey", "total", "status"]
     }
   },
   "firestore": {
@@ -257,6 +313,33 @@
     },
     "/shops/{shopId}/pages/{pageKey}": {
       "description": "Tenant custom CMS pages (about, faq, return policy, terms, privacy)"
+    },
+    "/shops/{shopId}/customers/{customerId}": {
+      "description": "Tenant customer profiles with Khata credit balance"
+    },
+    "/shops/{shopId}/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/Supplier" },
+      "description": "Tenant wholesale suppliers and payable balances"
+    },
+    "/shops/{shopId}/purchases/{purchaseId}": {
+      "description": "Tenant purchase invoices updating stock and supplier payables"
+    },
+    "/shops/{shopId}/pos_sales/{saleId}": {
+      "schema": { "$ref": "#/entities/PosSale" },
+      "description": "Tenant POS counter billing invoices and returns"
+    },
+    "/shops/{shopId}/stock_movements/{movementId}": {
+      "description": "Tenant comprehensive stock movement ledger"
+    },
+    "/shops/{shopId}/khata_ledger/{entryId}": {
+      "description": "Tenant customer credit (Khata) transaction ledger"
+    },
+    "/shops/{shopId}/expenses/{expenseId}": {
+      "description": "Tenant operating expenses for Net Profit reporting"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "Merchant support tickets submitted to Platform Super Admin"
     },
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },

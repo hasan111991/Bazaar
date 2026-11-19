@@ -31,10 +31,14 @@ import {
   DEFAULT_SUBSCRIPTION_PLANS,
   DEFAULT_PLATFORM_SETTINGS,
   INITIAL_SETTINGS,
-  INITIAL_CATEGORIES,
+  getDefaultCategoriesForBusinessType,
   sanitizeShopSlug,
   isValidShopSlug,
 } from '../data/seedData';
+import {
+  BusinessType,
+  SupportTicket,
+} from '../types';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
 
 export function stripUndefined<T>(obj: T): T {
@@ -62,11 +66,15 @@ export function toShopPublic(shop: Shop | ShopPublic, publicSettings?: Partial<S
     id: shop.id,
     slug: shop.slug,
     name: shop.name,
+    businessType: shop.businessType,
     logoUrl: shop.logoUrl || publicSettings?.logoUrl || '',
     city: shop.city || publicSettings?.city || '',
     publicContactPhone: publicSettings?.contactPhone || ('publicContactPhone' in shop ? shop.publicContactPhone : undefined),
     publicSupportEmail: publicSettings?.contactEmail || ('publicSupportEmail' in shop ? shop.publicSupportEmail : undefined),
     storefrontAddress: publicSettings?.address || ('storefrontAddress' in shop ? shop.storefrontAddress : undefined),
+    businessHours: publicSettings?.businessHours || ('businessHours' in shop ? shop.businessHours : undefined),
+    seoTitle: publicSettings?.seoTitle || ('seoTitle' in shop ? shop.seoTitle : undefined),
+    seoDescription: publicSettings?.seoDescription || ('seoDescription' in shop ? shop.seoDescription : undefined),
     theme: shop.theme,
     status: shop.status,
     createdAt: shop.createdAt,
@@ -74,11 +82,12 @@ export function toShopPublic(shop: Shop | ShopPublic, publicSettings?: Partial<S
   });
 }
 
-export function getShopSubscriptionStatus(shop?: Shop | null) {
+export function getShopSubscriptionStatus(shop?: Shop | null, gracePeriodDays = 0) {
   if (!shop) {
     return {
       isSuspended: false,
       isExpired: false,
+      inGracePeriod: false,
       daysRemaining: 0,
       effectiveStatus: 'unknown' as const,
     };
@@ -87,17 +96,22 @@ export function getShopSubscriptionStatus(shop?: Shop | null) {
   const isSuspended = shop.status === 'suspended' || shop.status === 'inactive';
   const expiryTime = shop.subscription?.expiryDate ? new Date(shop.subscription.expiryDate).getTime() : 0;
   const isFreeStarter = shop.subscription?.planId === 'free-starter' && shop.subscription?.status === 'active';
+  const graceMs = Math.max(0, gracePeriodDays) * 86400000;
+
+  const pastExpiry = !isFreeStarter && expiryTime > 0 && expiryTime < now.getTime();
+  const inGracePeriod = Boolean(pastExpiry && graceMs > 0 && now.getTime() <= expiryTime + graceMs && shop.subscription?.status !== 'expired' && shop.subscription?.status !== 'cancelled');
   const isExpired =
     !isFreeStarter &&
     (shop.subscription?.status === 'expired' ||
       shop.subscription?.status === 'cancelled' ||
-      (expiryTime > 0 && expiryTime < now.getTime()));
+      (expiryTime > 0 && now.getTime() > expiryTime + graceMs));
 
   const daysRemaining = expiryTime > now.getTime() ? Math.ceil((expiryTime - now.getTime()) / 86400000) : 0;
 
   return {
     isSuspended,
     isExpired,
+    inGracePeriod,
     daysRemaining,
     effectiveStatus: isSuspended ? shop.status : isExpired ? 'expired' : shop.subscription?.status || 'active',
   };
@@ -158,19 +172,10 @@ export async function saveSubscriptionPlan(plan: Partial<SubscriptionPlan>): Pro
     monthlyPrice: Number(plan.monthlyPrice) || 0,
     yearlyPrice: Number(plan.yearlyPrice) || 0,
     durationDays: Number(plan.durationDays) || 30,
-    maxProducts: Number(plan.maxProducts) || 50,
+    maxProducts: plan.maxProducts !== undefined ? Number(plan.maxProducts) : 50,
     maxStorageMB: Number(plan.maxStorageMB) || 100,
     maxStaff: Number(plan.maxStaff) || 1,
-    features: plan.features || {
-      customBranding: true,
-      coupons: true,
-      banners: true,
-      analytics: true,
-      selfPickup: true,
-      buyingGuide: true,
-      staffAccounts: true,
-      customPages: true,
-    },
+    features: plan.features || DEFAULT_SUBSCRIPTION_PLANS[1].features,
     isActive: plan.isActive !== false,
     isPopular: Boolean(plan.isPopular),
     order: Number(plan.order) || 1,
@@ -372,6 +377,7 @@ export async function registerNewShop(input: {
   ownerPhone: string;
   shopName: string;
   shopSlug: string;
+  businessType?: BusinessType;
   city: string;
   address: string;
   planId: string;
@@ -389,19 +395,22 @@ export async function registerNewShop(input: {
   }
 
   const plans = await getSubscriptionPlans();
-  const chosenPlan = plans.find((p) => p.id === input.planId) || DEFAULT_SUBSCRIPTION_PLANS[0];
-  const isFree = chosenPlan.monthlyPrice === 0;
+  const freePlan = plans.find((p) => p.id === 'free-starter') || DEFAULT_SUBSCRIPTION_PLANS[0];
+  const requestedPlan = plans.find((p) => p.id === input.planId) || freePlan;
+  // All new registrations start on Free Plan by default until manual upgrade payment is approved by Super Admin
+  const assignedPlan = freePlan;
   const now = new Date();
   const nowIso = now.toISOString();
 
-  const trialDays = isFree ? (chosenPlan.durationDays || 365) : 14;
-  const expiryDate = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000).toISOString();
+  const expiryDate = new Date(now.getTime() + (assignedPlan.durationDays || 36500) * 24 * 60 * 60 * 1000).toISOString();
   const shopId = slugCheck.cleanSlug;
+  const businessType: BusinessType = input.businessType || 'general_store';
 
   const newShop: Shop = {
     id: shopId,
     slug: slugCheck.cleanSlug,
     name: input.shopName.trim(),
+    businessType,
     ownerId: input.ownerId,
     ownerName: input.ownerName.trim(),
     ownerEmail: input.ownerEmail.trim(),
@@ -411,10 +420,10 @@ export async function registerNewShop(input: {
     logoUrl: '',
     status: 'active',
     subscription: {
-      planId: chosenPlan.id,
-      planName: chosenPlan.name,
-      status: isFree ? 'active' : 'trial',
-      billingCycle: input.billingCycle,
+      planId: assignedPlan.id,
+      planName: assignedPlan.name,
+      status: 'active',
+      billingCycle: 'monthly',
       pricePaid: 0,
       startDate: nowIso,
       expiryDate,
@@ -432,7 +441,13 @@ export async function registerNewShop(input: {
       heroTitle: `Welcome to ${input.shopName.trim()}`,
       heroSubtitle: `Authentic curated essentials delivered across Pakistan with Cash on Delivery & Self-Pickup.`,
       showTestimonials: true,
-      showBuyingGuide: chosenPlan.features.buyingGuide,
+      showBuyingGuide: assignedPlan.features.buyingGuide,
+    },
+    onboardingChecklist: {
+      accountCreated: true,
+      logoUploaded: false,
+      paymentConfigured: false,
+      firstProductAdded: false,
     },
     lastActivityAt: nowIso,
     createdAt: nowIso,
@@ -477,6 +492,10 @@ export async function registerNewShop(input: {
         'staff',
         'reports',
         'subscription',
+        'pos',
+        'suppliers',
+        'purchases',
+        'khata',
       ],
       status: 'active',
       createdAt: nowIso,
@@ -559,22 +578,27 @@ export async function registerNewShop(input: {
     batch.set(doc(db, 'shops', shopId, 'settings', 'public'), stripUndefined(publicSettingsPayload));
     batch.set(doc(db, 'shops', shopId, 'settings', 'private'), stripUndefined(privateSettingsPayload));
 
-    for (const cat of INITIAL_CATEGORIES.slice(0, 4)) {
-      batch.set(doc(db, 'shops', shopId, 'categories', cat.id), stripUndefined({ ...cat, shopId }));
+    const defaultCats = getDefaultCategoriesForBusinessType(businessType);
+    for (const cat of defaultCats) {
+      const catId = `cat_${cat.slug}`;
+      batch.set(
+        doc(db, 'shops', shopId, 'categories', catId),
+        stripUndefined({ ...cat, id: catId, shopId })
+      );
     }
 
     await batch.commit();
 
-    if (!isFree && input.paymentProof) {
-      const amount = input.billingCycle === 'yearly' ? chosenPlan.yearlyPrice : chosenPlan.monthlyPrice;
+    if (requestedPlan.monthlyPrice > 0 && input.paymentProof) {
+      const amount = input.billingCycle === 'yearly' ? requestedPlan.yearlyPrice : requestedPlan.monthlyPrice;
       await submitSubscriptionPayment({
         shopId,
         shopName: newShop.name,
         shopSlug: newShop.slug,
         ownerId: input.ownerId,
         ownerEmail: input.ownerEmail,
-        planId: chosenPlan.id,
-        planName: chosenPlan.name,
+        planId: requestedPlan.id,
+        planName: requestedPlan.name,
         billingCycle: input.billingCycle,
         amount,
         method: input.paymentProof.method,
@@ -584,7 +608,7 @@ export async function registerNewShop(input: {
       });
     }
 
-    await logPlatformActivity('Registered Shop', 'shop', shopId, `New shop "${newShop.name}" registered on ${chosenPlan.name}`);
+    await logPlatformActivity('Registered Shop', 'shop', shopId, `New ${businessType} shop "${newShop.name}" registered on ${assignedPlan.name}`);
     return newShop;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}`);
@@ -696,6 +720,12 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
       'notifications',
       'activity_logs',
       'customers',
+      'suppliers',
+      'purchases',
+      'pos_sales',
+      'stock_movements',
+      'khata_ledger',
+      'expenses',
       'pages',
       'carts',
       'wishlists',
@@ -1032,4 +1062,83 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
     monthlyRegistrationsChart,
     planBreakdown,
   };
+}
+
+export async function updateShopAdminNotes(shopId: string, adminNotes: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'shops', shopId), {
+      adminNotes,
+      updatedAt: new Date().toISOString(),
+    });
+    await logPlatformActivity('Updated Admin Notes', 'shop', shopId, `Updated internal Super Admin notes for ${shopId}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
+  }
+}
+
+// ====================================================
+// PLATFORM SUPPORT TICKETS
+// ====================================================
+
+export async function createSupportTicket(
+  input: Omit<SupportTicket, 'id' | 'status' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  const id = `tkt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  const payload = stripUndefined<SupportTicket>({
+    ...input,
+    id,
+    status: 'open',
+    createdAt: now,
+    updatedAt: now,
+  });
+  try {
+    await setDoc(doc(db, 'support_tickets', id), payload);
+    await logPlatformActivity('Created Support Ticket', 'ticket', id, `${input.userEmail}: ${input.subject}`);
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `support_tickets/${id}`);
+  }
+}
+
+export async function getAllSupportTickets(): Promise<SupportTicket[]> {
+  try {
+    const snap = await getDocs(collection(db, 'support_tickets'));
+    const list: SupportTicket[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as SupportTicket), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'support_tickets');
+  }
+}
+
+export async function getShopSupportTickets(shopId: string): Promise<SupportTicket[]> {
+  try {
+    const uid = auth.currentUser?.uid;
+    const colRef = collection(db, 'support_tickets');
+    const q = uid
+      ? query(colRef, where('shopId', '==', shopId), where('userId', '==', uid))
+      : query(colRef, where('shopId', '==', shopId));
+    const snap = await getDocs(q);
+    const list: SupportTicket[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as SupportTicket), id: d.id }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function updateSupportTicket(
+  ticketId: string,
+  updates: { status: SupportTicket['status']; adminReply?: string }
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'support_tickets', ticketId), {
+      ...stripUndefined(updates),
+      updatedAt: new Date().toISOString(),
+    });
+    await logPlatformActivity('Updated Support Ticket', 'ticket', ticketId, `Set status to ${updates.status}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `support_tickets/${ticketId}`);
+  }
 }

@@ -1,0 +1,179 @@
+import { Product, ShopPublic, StoreSettings } from '../types';
+
+export interface GeneratedSeoTags {
+  title: string;
+  description: string;
+  canonicalUrl: string;
+  siteName: string;
+  ogType: 'website' | 'product';
+  imageUrl?: string;
+  priceAmount?: number;
+  priceCurrency?: string;
+  availability?: 'in stock' | 'out of stock';
+  jsonLd: Record<string, any>;
+}
+
+function clampText(text: string, maxLen: number): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  return `${clean.slice(0, maxLen - 1).trim()}…`;
+}
+
+export function resolveCanonicalUrl(explicitPath?: string): string {
+  if (typeof window === 'undefined') {
+    return explicitPath ? `https://bazaarpk.com${explicitPath}` : 'https://bazaarpk.com';
+  }
+  const base = window.location.origin;
+  const path = explicitPath || window.location.pathname;
+  return `${base}${path}`;
+}
+
+/**
+ * Generates SEO metadata, OpenGraph, Twitter tags & Schema.org JSON-LD
+ * directly from Firestore shop, settings, and optional product data.
+ */
+export function buildShopSeoTags(params: {
+  shop?: ShopPublic | null;
+  settings?: Partial<StoreSettings> | null;
+  product?: Product | null;
+  pageTitle?: string;
+  pageDescription?: string;
+  categoryName?: string;
+  searchQuery?: string;
+  canonicalUrl?: string;
+}): GeneratedSeoTags {
+  const {
+    shop,
+    settings,
+    product,
+    pageTitle,
+    pageDescription,
+    categoryName,
+    searchQuery,
+    canonicalUrl = resolveCanonicalUrl(),
+  } = params;
+
+  const storeName = (shop?.name || settings?.siteName || 'BazaarPK Store').trim();
+  const city = (shop?.city || settings?.city || 'Pakistan').trim();
+  const storeLogo = shop?.logoUrl || settings?.logoUrl || '';
+  const currency = settings?.currency || 'PKR';
+
+  // 1. Product Detail SEO (Schema.org Product + Offer)
+  if (product) {
+    const activePrice = product.salePrice ?? product.regularPrice ?? 0;
+    const productImage = product.images?.[0] || storeLogo || undefined;
+    const rawTitle = `${product.title} – Rs. ${Math.round(activePrice).toLocaleString('en-PK')} | ${storeName}`;
+    const rawDesc =
+      product.description?.trim() ||
+      `Buy ${product.title} from ${storeName} (${city}) at Rs. ${Math.round(activePrice).toLocaleString('en-PK')}. Fast Cash on Delivery & Self-Pickup across Pakistan.`;
+
+    return {
+      title: clampText(rawTitle, 68),
+      description: clampText(rawDesc, 160),
+      canonicalUrl,
+      siteName: storeName,
+      ogType: 'product',
+      imageUrl: productImage,
+      priceAmount: activePrice,
+      priceCurrency: currency,
+      availability: product.stock > 0 ? 'in stock' : 'out of stock',
+      jsonLd: {
+        '@context': 'https://schema.org',
+        '@type': 'Product',
+        name: product.title,
+        description: clampText(rawDesc, 200),
+        sku: product.sku,
+        image: productImage ? [productImage] : undefined,
+        brand: {
+          '@type': 'Brand',
+          name: product.brand || storeName,
+        },
+        offers: {
+          '@type': 'Offer',
+          url: canonicalUrl,
+          priceCurrency: currency,
+          price: String(activePrice),
+          availability:
+            product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+          seller: {
+            '@type': 'Store',
+            name: storeName,
+          },
+        },
+      },
+    };
+  }
+
+  // 2. Storefront / Category / Search / Policy SEO (Schema.org Store)
+  let rawTitle =
+    pageTitle ||
+    shop?.seoTitle ||
+    settings?.seoTitle ||
+    `${storeName} – Online Store in ${city}`;
+
+  if (categoryName) {
+    rawTitle = `${categoryName} | ${storeName} (${city})`;
+  } else if (searchQuery) {
+    rawTitle = `"${searchQuery}" Search Results | ${storeName}`;
+  }
+
+  const rawDesc =
+    pageDescription ||
+    shop?.seoDescription ||
+    settings?.seoDescription ||
+    shop?.theme?.heroSubtitle ||
+    settings?.aboutUs ||
+    `Shop authentic products online from ${storeName} in ${city}. Nationwide Cash on Delivery, EasyPaisa, JazzCash & convenient store pickup across Pakistan.`;
+
+  return {
+    title: clampText(rawTitle, 68),
+    description: clampText(rawDesc, 160),
+    canonicalUrl,
+    siteName: storeName,
+    ogType: 'website',
+    imageUrl: storeLogo || undefined,
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'Store',
+      name: storeName,
+      url: canonicalUrl,
+      image: storeLogo || undefined,
+      description: clampText(rawDesc, 200),
+      telephone: shop?.publicContactPhone || settings?.contactPhone || undefined,
+      email: shop?.publicSupportEmail || settings?.contactEmail || undefined,
+      address: {
+        '@type': 'PostalAddress',
+        streetAddress: shop?.storefrontAddress || settings?.address || undefined,
+        addressLocality: city,
+        addressCountry: 'PK',
+      },
+    },
+  };
+}
+
+export function buildPlatformSeoTags(canonicalUrl = resolveCanonicalUrl('/')): GeneratedSeoTags {
+  const title = 'BazaarPK Cloud – Multi-Tenant Retail & Ecommerce SaaS for Pakistan';
+  const description =
+    'Launch your Pakistani general store, cosmetics shop, or clothing store online in 60 seconds with POS billing, Khata ledger, COD & EasyPaisa/JazzCash.';
+
+  return {
+    title,
+    description,
+    canonicalUrl,
+    siteName: 'BazaarPK Cloud',
+    ogType: 'website',
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'WebApplication',
+      name: 'BazaarPK Cloud',
+      applicationCategory: 'BusinessApplication',
+      operatingSystem: 'All',
+      description,
+      offers: {
+        '@type': 'Offer',
+        price: '0',
+        priceCurrency: 'PKR',
+      },
+    },
+  };
+}

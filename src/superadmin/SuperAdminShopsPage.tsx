@@ -22,7 +22,8 @@ import {
   getShopSubscriptionStatus,
 } from '../services/platformService';
 import { migrateLegacyBazaarPKToTenant } from '../services/migrationService';
-import { Shop, SubscriptionPlan, MigrationResult, BillingCycle } from '../types';
+import { Shop, SubscriptionPlan, MigrationResult, BillingCycle, BusinessType } from '../types';
+import { BUSINESS_TYPE_OPTIONS } from '../data/seedData';
 import { useAuth } from '../context/AuthContext';
 
 export const SuperAdminShopsPage: React.FC = () => {
@@ -33,6 +34,7 @@ export const SuperAdminShopsPage: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'suspended'>('all');
+  const [businessTypeFilter, setBusinessTypeFilter] = useState<'all' | BusinessType>('all');
   const [planFilter, setPlanFilter] = useState<string>('all');
   const [subFilter, setSubFilter] = useState<'all' | 'free' | 'paid' | 'trial' | 'expired' | 'active_sub'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'name' | 'products' | 'orders'>('newest');
@@ -47,7 +49,7 @@ export const SuperAdminShopsPage: React.FC = () => {
 
   // Plan modal state
   const [planModalShop, setPlanModalShop] = useState<Shop | null>(null);
-  const [selectedPlanId, setSelectedPlanId] = useState('growth-plus');
+  const [selectedPlanId, setSelectedPlanId] = useState('starter');
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [extraDays, setExtraDays] = useState(30);
   const [freeOverride, setFreeOverride] = useState(false);
@@ -87,6 +89,9 @@ export const SuperAdminShopsPage: React.FC = () => {
     if (statusFilter !== 'all') {
       res = res.filter((s) => s.status === statusFilter);
     }
+    if (businessTypeFilter !== 'all') {
+      res = res.filter((s) => (s.businessType || 'general_store') === businessTypeFilter);
+    }
     if (planFilter !== 'all') {
       res = res.filter((s) => s.subscription?.planId === planFilter);
     }
@@ -111,7 +116,7 @@ export const SuperAdminShopsPage: React.FC = () => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
     return res;
-  }, [shops, plans, searchQuery, statusFilter, planFilter, subFilter, sortBy]);
+  }, [shops, plans, searchQuery, statusFilter, businessTypeFilter, planFilter, subFilter, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -271,7 +276,7 @@ export const SuperAdminShopsPage: React.FC = () => {
       )}
 
       {/* Search & Filters */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -282,6 +287,16 @@ export const SuperAdminShopsPage: React.FC = () => {
             className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-[#065F46] focus:outline-none"
           />
         </div>
+        <select
+          value={businessTypeFilter}
+          onChange={(e) => { setBusinessTypeFilter(e.target.value as any); setPage(1); }}
+          className="px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white"
+        >
+          <option value="all">All Store Types</option>
+          {BUSINESS_TYPE_OPTIONS.map((bt) => (
+            <option key={bt.value} value={bt.value}>{bt.label}</option>
+          ))}
+        </select>
         <select
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value as any); setPage(1); }}
@@ -365,7 +380,12 @@ export const SuperAdminShopsPage: React.FC = () => {
                           <Link to={`/super-admin/shops/${s.id}`} className="font-bold text-slate-900 hover:text-[#065F46]">
                             {s.name}
                           </Link>
-                          <p className="text-[11px] font-mono text-slate-500">/s/{s.slug}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[11px] font-mono text-slate-500">/s/{s.slug}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-semibold">
+                              {BUSINESS_TYPE_OPTIONS.find((b) => b.value === (s.businessType || 'general_store'))?.label || 'General Store'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -444,7 +464,7 @@ export const SuperAdminShopsPage: React.FC = () => {
                           type="button"
                           onClick={() => {
                             setPlanModalShop(s);
-                            setSelectedPlanId(s.subscription?.planId || 'growth-plus');
+                            setSelectedPlanId(s.subscription?.planId || 'starter');
                           }}
                           className="px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 text-[11px] font-semibold"
                         >

@@ -121,7 +121,7 @@ export const ShopSubscriptionPage: React.FC = () => {
         <div>
           <span className="text-slate-500 block">Plan Limits</span>
           <strong className="text-slate-900 tabular-nums">
-            {currentPlan.maxProducts} prod · {currentPlan.maxStorageMB} MB · {currentPlan.maxStaff} staff
+            {currentPlan.maxProducts === -1 ? 'Unlimited' : currentPlan.maxProducts} prod · {currentPlan.maxStorageMB} MB · {currentPlan.maxStaff} staff
           </strong>
         </div>
         <div>
@@ -155,7 +155,7 @@ export const ShopSubscriptionPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {plans.map((p) => {
           const price = billingCycle === 'yearly' ? p.yearlyPrice : p.monthlyPrice;
           const isCurrent = p.id === currentPlan.id;
@@ -171,7 +171,10 @@ export const ShopSubscriptionPage: React.FC = () => {
                   {price === 0 ? 'Free' : `${formatPKR(price)} / ${billingCycle === 'yearly' ? 'yr' : 'mo'}`}
                 </p>
                 <ul className="space-y-1.5 text-slate-700 pt-2 border-t border-slate-100">
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#065F46]" /> Up to {p.maxProducts} products</li>
+                  <li className="flex items-center gap-1.5">
+                    <Check className="w-3.5 h-3.5 text-[#065F46]" />
+                    {p.maxProducts === -1 ? 'Unlimited Active Products' : `Up to ${p.maxProducts} Active Products`}
+                  </li>
                   <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#065F46]" /> {p.maxStorageMB} MB Cloud Storage</li>
                   <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#065F46]" /> {p.maxStaff} Team Members</li>
                 </ul>

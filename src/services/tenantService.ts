@@ -1,6 +1,6 @@
 import {
-  collection,
   doc,
+  collection,
   getDoc,
   getDocs,
   setDoc,
@@ -10,6 +10,7 @@ import {
   where,
   writeBatch,
   increment,
+  runTransaction,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
@@ -22,6 +23,8 @@ import {
   StoreSettings,
   Banner,
   InventoryLog,
+  StockMovement,
+  StockMovementType,
   CartItem,
   ContactMessage,
   StaffMember,
@@ -50,6 +53,17 @@ import {
 // PLAN LIMIT & SUBSCRIPTION ENFORCEMENT HELPERS
 // ====================================================
 
+export function countActiveProducts(products: Pick<Product, 'status' | 'isPublished'>[]): number {
+  return products.filter((p) => p.status !== 'archived' && p.isPublished !== false).length;
+}
+
+export function getProductLimitErrorMessage(planId: string | undefined, planName: string | undefined, activeCount: number, maxProducts: number): string {
+  if (planId === 'free-starter' || maxProducts === 1) {
+    return 'Your Free Plan allows only 1 active product. Upgrade to Starter to add up to 50 products.';
+  }
+  return `Active product limit reached (${activeCount}/${maxProducts} on ${planName || 'current plan'}). Archive unused items or upgrade your plan to add more active products.`;
+}
+
 export async function getShopAndPlanLimits(shopId: string) {
   const shopSnap = await getDoc(doc(db, 'shops', shopId));
   if (!shopSnap.exists()) {
@@ -62,9 +76,12 @@ export async function getShopAndPlanLimits(shopId: string) {
   }
   const shop = { ...(shopSnap.data() as Shop), id: shopSnap.id };
   const plansSnap = await getDoc(doc(db, 'platform_plans', shop.subscription?.planId || 'free-starter'));
-  const plan = plansSnap.exists()
-    ? (plansSnap.data() as any)
-    : DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === shop.subscription?.planId) || DEFAULT_SUBSCRIPTION_PLANS[0];
+  const defaultFallback =
+    DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === shop.subscription?.planId) ||
+    (shop.subscription?.planId === 'growth-plus' ? DEFAULT_SUBSCRIPTION_PLANS[2] : undefined) ||
+    (shop.subscription?.planId === 'enterprise-pro' ? DEFAULT_SUBSCRIPTION_PLANS[3] : undefined) ||
+    DEFAULT_SUBSCRIPTION_PLANS[0];
+  const plan = plansSnap.exists() ? (plansSnap.data() as any) : defaultFallback;
 
   const { isSuspended, isExpired } = getShopSubscriptionStatus(shop);
 
@@ -126,7 +143,7 @@ export async function markNotificationRead(shopId: string, notifId: string): Pro
 }
 
 // ====================================================
-// PRODUCTS (TENANT SCOPED + PLAN LIMIT GUARDED)
+// PRODUCTS (TENANT SCOPED + ACTIVE PRODUCT LIMIT GUARDED)
 // ====================================================
 
 export async function getShopProducts(
@@ -138,7 +155,12 @@ export async function getShopProducts(
     const q = query(collection(db, 'shops', shopId, 'products'), where('isPublished', '==', true));
     const snap = await getDocs(q);
     const list: Product[] = [];
-    snap.forEach((d) => list.push({ ...(d.data() as Product), id: d.id, shopId }));
+    snap.forEach((d) => {
+      const data = d.data() as Product;
+      if (data.status !== 'archived') {
+        list.push({ ...data, id: d.id, shopId });
+      }
+    });
     let filtered = list;
     if (options?.category) filtered = filtered.filter((p) => p.category === options.category);
     if (options?.featuredOnly) filtered = filtered.filter((p) => p.isFeatured);
@@ -172,16 +194,25 @@ export async function getShopProductById(shopId: string, id: string): Promise<Pr
 
 export async function saveShopProduct(shopId: string, product: Partial<Product>): Promise<string> {
   const isNew = !product.id;
-  if (isNew) {
+  const willBeActive = product.status !== 'archived' && product.isPublished !== false;
+
+  if (willBeActive) {
     const { shop, plan, isSuspended, isExpired } = await getShopAndPlanLimits(shopId);
     if (isSuspended || isExpired) {
-      throw new Error('Your store subscription is inactive or expired. Renew your plan to add products.');
+      throw new Error('Your store subscription is inactive or expired. Renew your plan to publish products.');
     }
-    const existing = await getDocs(collection(db, 'shops', shopId, 'products'));
-    if (existing.size >= (plan?.maxProducts || 25)) {
-      throw new Error(
-        `Product limit reached (${existing.size}/${plan.maxProducts} on ${shop?.subscription?.planName || 'current plan'}). Upgrade your subscription to add more products.`
-      );
+    const maxProducts = Number(plan?.maxProducts ?? 1);
+    if (maxProducts !== -1) {
+      const existingSnap = await getDocs(collection(db, 'shops', shopId, 'products'));
+      const otherActive = existingSnap.docs
+        .filter((d) => d.id !== product.id)
+        .map((d) => d.data() as Product)
+        .filter((p) => p.status !== 'archived' && p.isPublished !== false);
+      if (otherActive.length >= maxProducts) {
+        throw new Error(
+          getProductLimitErrorMessage(plan?.id, shop?.subscription?.planName, otherActive.length, maxProducts)
+        );
+      }
     }
   }
 
@@ -190,19 +221,30 @@ export async function saveShopProduct(shopId: string, product: Partial<Product>)
   const docData = stripUndefined<Product>({
     id,
     shopId,
+    branchId: product.branchId,
     title: product.title || 'Untitled Product',
     slug: (product.title || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     description: product.description || '',
+    purchasePrice: product.purchasePrice !== undefined ? Number(product.purchasePrice) : undefined,
     regularPrice: Number(product.regularPrice) || 0,
     salePrice: product.salePrice && Number(product.salePrice) > 0 ? Number(product.salePrice) : undefined,
     stock: Number(product.stock) || 0,
+    minStockAlert: product.minStockAlert !== undefined ? Number(product.minStockAlert) : 5,
+    unit: product.unit || 'Piece',
     category: product.category || 'general',
     brand: product.brand || 'Store Brand',
     images: product.images && product.images.length > 0 ? product.images : [FALLBACK_PRODUCT_IMAGE],
     sku: product.sku || `SKU-${Date.now().toString().slice(-6)}`,
+    barcode: product.barcode?.trim() || undefined,
     variants: product.variants || [],
+    shade: product.shade?.trim() || undefined,
+    variantSize: product.variantSize?.trim() || undefined,
+    skinHairCategory: product.skinHairCategory?.trim() || undefined,
+    color: product.color?.trim() || undefined,
+    designRef: product.designRef?.trim() || undefined,
+    status: product.status || 'active',
     isFeatured: Boolean(product.isFeatured),
-    isPublished: product.isPublished !== false,
+    isPublished: product.status === 'archived' ? false : product.isPublished !== false,
     rating: product.rating || 4.8,
     reviewCount: product.reviewCount || 0,
     specifications: product.specifications || {},
@@ -215,6 +257,7 @@ export async function saveShopProduct(shopId: string, product: Partial<Product>)
     if (isNew) {
       await updateDoc(doc(db, 'shops', shopId), {
         'usage.productsCount': increment(1),
+        'onboardingChecklist.firstProductAdded': true,
         lastActivityAt: now,
       }).catch(() => {});
     }
@@ -222,6 +265,33 @@ export async function saveShopProduct(shopId: string, product: Partial<Product>)
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/products/${id}`);
+  }
+}
+
+export async function archiveShopProduct(shopId: string, id: string, archive = true): Promise<void> {
+  if (!archive) {
+    // Re-activating must pass active-product plan quota check
+    const existing = await getShopProductById(shopId, id);
+    if (existing) {
+      await saveShopProduct(shopId, { ...existing, status: 'active', isPublished: true });
+      return;
+    }
+  }
+  try {
+    await updateDoc(doc(db, 'shops', shopId, 'products', id), {
+      status: archive ? 'archived' : 'active',
+      isPublished: !archive,
+      updatedAt: new Date().toISOString(),
+    });
+    await logShopActivity(
+      shopId,
+      archive ? 'Archived Product' : 'Restored Product',
+      'product',
+      id,
+      `${archive ? 'Archived' : 'Restored'} product ${id}`
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/products/${id}`);
   }
 }
 
@@ -668,6 +738,9 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
     currency: settings.currency || 'PKR',
     currencySymbol: settings.currencySymbol || 'Rs.',
     aboutUs: settings.aboutUs,
+    businessHours: settings.businessHours,
+    seoTitle: settings.seoTitle,
+    seoDescription: settings.seoDescription,
     selfPickupDetails: settings.selfPickupDetails,
     socialLinks: settings.socialLinks,
     // Buyer checkout transfer details ONLY exposed on public doc when enabled by merchant
@@ -701,6 +774,10 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
         address: settings.address,
         'theme.primaryColor': settings.primaryColor || '#065f46',
         'theme.accentColor': settings.accentColor || '#d97706',
+        'onboardingChecklist.logoUploaded': Boolean(settings.logoUrl),
+        'onboardingChecklist.paymentConfigured': Boolean(
+          settings.easypaisaDetails?.enabled || settings.jazzcashDetails?.enabled || settings.bankDetails?.accountNumber
+        ),
         updatedAt: nowIso,
       })
     );
@@ -715,6 +792,9 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
         publicContactPhone: settings.contactPhone || '',
         publicSupportEmail: settings.contactEmail || '',
         storefrontAddress: settings.address || '',
+        businessHours: settings.businessHours || '',
+        seoTitle: settings.seoTitle || '',
+        seoDescription: settings.seoDescription || '',
         'theme.primaryColor': settings.primaryColor || '#065f46',
         'theme.accentColor': settings.accentColor || '#d97706',
         updatedAt: nowIso,
@@ -911,34 +991,73 @@ export async function getShopInventoryLogs(shopId: string): Promise<InventoryLog
   }
 }
 
+export async function getShopStockMovements(shopId: string): Promise<StockMovement[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'stock_movements'));
+    const list: StockMovement[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as StockMovement), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch {
+    return [];
+  }
+}
+
 export async function adjustShopStock(
   shopId: string,
   productId: string,
   delta: number,
   reason: string,
-  updatedBy: string
+  updatedBy: string,
+  movementType: StockMovementType = delta >= 0 ? 'stock_in' : 'stock_out',
+  referenceTransaction?: string
 ): Promise<void> {
   const prodRef = doc(db, 'shops', shopId, 'products', productId);
-  try {
-    const snap = await getDoc(prodRef);
-    if (!snap.exists()) throw new Error('Product not found in this shop');
-    const prod = snap.data() as Product;
-    const previousStock = prod.stock || 0;
-    const newStock = Math.max(0, previousStock + delta);
-    await updateDoc(prodRef, { stock: newStock, updatedAt: new Date().toISOString() });
+  const nowIso = new Date().toISOString();
+  const uid = auth.currentUser?.uid || updatedBy;
 
-    const logId = `log_${Date.now()}`;
-    await setDoc(doc(db, 'shops', shopId, 'inventory_logs', logId), {
-      id: logId,
-      shopId,
-      productId,
-      productTitle: prod.title,
-      changeQuantity: delta,
-      previousStock,
-      newStock,
-      reason,
-      updatedBy,
-      createdAt: new Date().toISOString(),
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(prodRef);
+      if (!snap.exists()) throw new Error('Product not found in this shop');
+      const prod = snap.data() as Product;
+      const previousStock = Number(prod.stock || 0);
+      const newStock = Math.max(0, previousStock + delta);
+
+      tx.update(prodRef, { stock: newStock, updatedAt: nowIso });
+
+      const logId = `log_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+      tx.set(doc(db, 'shops', shopId, 'inventory_logs', logId), {
+        id: logId,
+        shopId,
+        productId,
+        productTitle: prod.title,
+        changeQuantity: delta,
+        previousStock,
+        newStock,
+        reason,
+        updatedBy,
+        createdAt: nowIso,
+      });
+
+      const movId = `mov_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+      tx.set(
+        doc(db, 'shops', shopId, 'stock_movements', movId),
+        stripUndefined<StockMovement>({
+          id: movId,
+          shopId,
+          productId,
+          productTitle: prod.title,
+          type: movementType,
+          quantityChange: delta,
+          previousQuantity: previousStock,
+          newQuantity: newStock,
+          reason,
+          userId: uid,
+          userEmail: updatedBy,
+          referenceTransaction,
+          timestamp: nowIso,
+        })
+      );
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/products/${productId}`);

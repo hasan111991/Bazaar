@@ -23,7 +23,19 @@ import {
   resolveTenantFromHostname,
   buildStorefrontPath,
 } from '../src/utils/tenantDomain';
-import type { Shop } from '../src/types';
+import {
+  buildShopSeoTags,
+  buildPlatformSeoTags,
+} from '../src/utils/seo';
+import {
+  countActiveProducts,
+  getProductLimitErrorMessage,
+} from '../src/services/tenantService';
+import {
+  calculateRetailProfitSummary,
+  calculateInventoryValuation,
+} from '../src/services/retailService';
+import type { Shop, Product, Order, PosSale, ShopExpense } from '../src/types';
 
 const WORKSPACE_ROOT = process.cwd();
 
@@ -85,6 +97,18 @@ describe('Priority 1 & 2: Multi-Tenant Firestore & Storage Rules Audit', () => {
     expect(storageRules).toContain('allow read: if isShopAdmin(shopId);');
     expect(storageRules).toContain('5 * 1024 * 1024');
     expect(storageRules).toContain("request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)')");
+  });
+
+  it('isolates Stage 1 retail subcollections, support tickets, and allows SEO fields in shops_public', () => {
+    expect(firestoreRules).toContain('match /suppliers/{supplierId}');
+    expect(firestoreRules).toContain('match /purchases/{purchaseId}');
+    expect(firestoreRules).toContain('match /pos_sales/{saleId}');
+    expect(firestoreRules).toContain('match /stock_movements/{movementId}');
+    expect(firestoreRules).toContain('match /khata_ledger/{entryId}');
+    expect(firestoreRules).toContain('match /expenses/{expenseId}');
+    expect(firestoreRules).toContain('match /support_tickets/{ticketId}');
+    expect(firestoreRules).toContain("'seoTitle', 'seoDescription'");
+    expect(firestoreRules).toContain("'businessType'");
   });
 });
 
@@ -265,12 +289,231 @@ describe('SaaS Slug, Currency & Plan Invariants', () => {
     expect(cleaned).toEqual({ name: 'Karachi Store', nested: { city: 'Karachi' } });
   });
 
-  it('defines progressive plan quotas and isolated localStorage keys', () => {
-    const starter = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'free-starter');
-    const growth = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'growth-plus');
-    const enterprise = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'enterprise-pro');
-    expect(starter?.maxProducts).toBeLessThan(growth?.maxProducts || 0);
-    expect(growth?.maxProducts).toBeLessThan(enterprise?.maxProducts || 0);
+  it('defines progressive Stage 1 plan quotas, Unlimited (-1) Professional tier, and isolated localStorage keys', () => {
+    const freeStarter = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'free-starter');
+    const starter = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'starter');
+    const business = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'business');
+    const professional = DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === 'professional');
+
+    expect(freeStarter?.maxProducts).toBe(1);
+    expect(starter?.maxProducts).toBe(50);
+    expect(business?.maxProducts).toBe(500);
+    expect(professional?.maxProducts).toBe(-1);
+    expect(business?.features.pos).toBe(true);
+    expect(business?.features.khata).toBe(true);
+    expect(starter?.features.pos).toBe(false);
     expect(`bazaarpk_cart_a`).not.toBe(`bazaarpk_cart_b`);
+  });
+});
+
+describe('Dynamic SEO Tag Generator & Stage 1 Retail Helpers', () => {
+  it('generates shop, category, product, and platform SEO metadata + Schema.org JSON-LD from Firestore records', () => {
+    const shopPublic = {
+      id: 'lahore-mart',
+      slug: 'lahore-mart',
+      name: 'Lahore Mart',
+      city: 'Lahore',
+      status: 'active' as const,
+      seoTitle: 'Lahore Mart | Best Online Kiryana & Cosmetics',
+      seoDescription: 'Fast same-day delivery in Lahore with EasyPaisa, JazzCash & COD.',
+    };
+
+    const storeSeo = buildShopSeoTags({ shop: shopPublic, canonicalUrl: 'https://bazaarpk.com/s/lahore-mart' });
+    expect(storeSeo.title).toBe('Lahore Mart | Best Online Kiryana & Cosmetics');
+    expect(storeSeo.description).toContain('Fast same-day delivery in Lahore');
+    expect(storeSeo.jsonLd['@type']).toBe('Store');
+    expect(storeSeo.jsonLd.address.addressLocality).toBe('Lahore');
+
+    const catSeo = buildShopSeoTags({
+      shop: shopPublic,
+      categoryName: 'Skin Care',
+      canonicalUrl: 'https://bazaarpk.com/s/lahore-mart/shop',
+    });
+    expect(catSeo.title).toBe('Skin Care | Lahore Mart (Lahore)');
+
+    const sampleProduct: Product = {
+      id: 'p1',
+      title: 'Basmati Rice 5kg',
+      slug: 'basmati-rice-5kg',
+      description: 'Premium aged Pakistani super kernel basmati rice.',
+      regularPrice: 2200,
+      salePrice: 1950,
+      stock: 15,
+      category: 'groceries',
+      brand: 'Guard',
+      images: ['https://cdn.example.com/rice.jpg'],
+      sku: 'SKU-RICE-5',
+      isFeatured: true,
+      isPublished: true,
+      rating: 4.9,
+      reviewCount: 12,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const prodSeo = buildShopSeoTags({
+      shop: shopPublic,
+      product: sampleProduct,
+      canonicalUrl: 'https://bazaarpk.com/s/lahore-mart/product/p1',
+    });
+    expect(prodSeo.ogType).toBe('product');
+    expect(prodSeo.title).toContain('Basmati Rice 5kg');
+    expect(prodSeo.priceAmount).toBe(1950);
+    expect(prodSeo.availability).toBe('in stock');
+    expect(prodSeo.jsonLd['@type']).toBe('Product');
+    expect(prodSeo.jsonLd.offers.priceCurrency).toBe('PKR');
+
+    const platformSeo = buildPlatformSeoTags('https://bazaarpk.com/');
+    expect(platformSeo.jsonLd['@type']).toBe('WebApplication');
+    expect(platformSeo.title).toContain('BazaarPK Cloud');
+  });
+
+  it('enforces Free Plan 1-active-product limit excluding archived products', () => {
+    const items = [
+      { status: 'active' as const, isPublished: true },
+      { status: 'archived' as const, isPublished: false },
+      { status: 'active' as const, isPublished: false },
+    ];
+    expect(countActiveProducts(items)).toBe(1);
+    expect(getProductLimitErrorMessage('free-starter', 'Free Plan', 1, 1)).toBe(
+      'Your Free Plan allows only 1 active product. Upgrade to Starter to add up to 50 products.'
+    );
+  });
+
+  it('handles subscription renewal grace period window cleanly', () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 86400000).toISOString();
+    const tenDaysAgo = new Date(Date.now() - 10 * 86400000).toISOString();
+
+    const baseShop: Shop = {
+      id: 'grace-shop',
+      slug: 'grace-shop',
+      name: 'Grace Store',
+      ownerId: 'u1',
+      ownerName: 'O',
+      ownerEmail: 'o@example.com',
+      ownerPhone: '03001234567',
+      city: 'Karachi',
+      address: 'Karachi',
+      status: 'active',
+      subscription: {
+        planId: 'business',
+        planName: 'Business',
+        status: 'active',
+        billingCycle: 'monthly',
+        pricePaid: 1499,
+        startDate: '2026-01-01T00:00:00.000Z',
+        expiryDate: threeDaysAgo,
+      },
+      usage: { productsCount: 10, ordersCount: 5, storageBytes: 0, staffCount: 1 },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const withinGrace = getShopSubscriptionStatus(baseShop, 5);
+    expect(withinGrace.inGracePeriod).toBe(true);
+    expect(withinGrace.isExpired).toBe(false);
+
+    const pastGrace = getShopSubscriptionStatus(
+      { ...baseShop, subscription: { ...baseShop.subscription, expiryDate: tenDaysAgo } },
+      5
+    );
+    expect(pastGrace.inGracePeriod).toBe(false);
+    expect(pastGrace.isExpired).toBe(true);
+  });
+
+  it('computes COGS, Gross/Net Profit, Estimated COGS warnings, and Inventory Valuation accurately', () => {
+    const products: Product[] = [
+      {
+        id: 'p1',
+        title: 'Product A',
+        slug: 'a',
+        description: '',
+        purchasePrice: 600,
+        regularPrice: 1000,
+        stock: 10,
+        category: 'general',
+        brand: 'B',
+        images: [],
+        sku: 'A1',
+        isFeatured: false,
+        isPublished: true,
+        rating: 5,
+        reviewCount: 0,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'p2',
+        title: 'Product B (No Cost)',
+        slug: 'b',
+        description: '',
+        regularPrice: 500,
+        stock: 4,
+        status: 'active',
+        category: 'general',
+        brand: 'B',
+        images: [],
+        sku: 'B1',
+        isFeatured: false,
+        isPublished: true,
+        rating: 5,
+        reviewCount: 0,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+
+    const orders: Order[] = [
+      {
+        id: 'ord1',
+        orderNumber: 'PK-100001',
+        userId: 'u1',
+        customer: { name: 'Ali', email: 'a@b.pk', phone: '03001234567', address: 'St 1', city: 'Lahore', postalCode: '' },
+        items: [{ productId: 'p1', title: 'Product A', price: 1000, quantity: 2, image: '' }],
+        subtotal: 2000,
+        shippingFee: 0,
+        discount: 0,
+        total: 2000,
+        paymentMethod: 'cod',
+        paymentStatus: 'paid',
+        orderStatus: 'Delivered',
+        createdAt: '2026-02-01T00:00:00.000Z',
+      },
+    ];
+
+    const posSales: PosSale[] = [
+      {
+        id: 'pos1',
+        shopId: 's1',
+        invoiceNumber: 'INV-1',
+        idempotencyKey: 'k1',
+        items: [{ productId: 'p2', title: 'Product B', quantity: 1, unitPrice: 500, costPrice: 0, lineTotal: 500 }],
+        subtotal: 500,
+        discount: 0,
+        total: 500,
+        paymentMethod: 'cash',
+        cashierId: 'c1',
+        cashierName: 'Cashier',
+        status: 'completed',
+        createdAt: '2026-02-02T00:00:00.000Z',
+      },
+    ];
+
+    const expenses: ShopExpense[] = [
+      { id: 'e1', shopId: 's1', title: 'Electricity', category: 'utilities', amount: 300, date: '2026-02-02', createdBy: 'owner@example.com', createdAt: '2026-02-02' },
+    ];
+
+    const summary = calculateRetailProfitSummary({ orders, posSales, products, expenses });
+    expect(summary.totalRevenue).toBe(2500);
+    expect(summary.onlineRevenue).toBe(2000);
+    expect(summary.posRevenue).toBe(500);
+    expect(summary.cogs).toBe(1200);
+    expect(summary.grossProfit).toBe(1300);
+    expect(summary.totalExpenses).toBe(300);
+    expect(summary.netProfit).toBe(1000);
+    expect(summary.hasEstimatedCogs).toBe(true);
+    expect(summary.missingCostItemsCount).toBe(1);
+
+    const val = calculateInventoryValuation(products);
+    expect(val.totalUnits).toBe(14);
+    expect(val.costValuation).toBe(6000);
+    expect(val.retailValuation).toBe(12000);
+    expect(val.missingCostCount).toBe(1);
   });
 });
