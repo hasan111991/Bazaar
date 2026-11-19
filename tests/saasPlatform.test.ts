@@ -537,6 +537,126 @@ describe('Dynamic SEO Tag Generator & Stage 1 Retail Helpers', () => {
     );
     expect(landingSrc).toContain('getSubscriptionPlans');
     expect(landingSrc).toContain('getActiveDirectoryShopsPublic');
+    expect(landingSrc).toContain('getPlatformSettings');
   });
 });
+
+describe('Phase 2-6 Audit: Dual Social System, Storage Quota, Partial Merge, Private Receipts & Server Hardening', () => {
+  it('validates & normalizes WhatsApp + social URLs while filtering placeholders and XSS schemes', async () => {
+    const {
+      formatWhatsAppUrl,
+      isPlaceholderSocialUrl,
+      normalizeAndValidateSocialLinks,
+      getConfiguredSocialLinks,
+      normalizeOptionalHttpUrl,
+    } = await import('../src/utils/socialLinks');
+
+    expect(formatWhatsAppUrl('0300 5551234')).toBe('https://wa.me/923005551234');
+    expect(formatWhatsAppUrl('+923451234567')).toBe('https://wa.me/923451234567');
+    expect(() => normalizeAndValidateSocialLinks({ facebook: 'javascript:alert(1)' })).toThrow();
+    expect(() => normalizeOptionalHttpUrl('data:text/html,xss')).toThrow();
+
+    expect(isPlaceholderSocialUrl('https://facebook.com')).toBe(true);
+    expect(isPlaceholderSocialUrl('https://instagram.com/')).toBe(true);
+    expect(isPlaceholderSocialUrl('https://wa.me/923001234567')).toBe(true);
+    expect(isPlaceholderSocialUrl('https://facebook.com/realstorepk')).toBe(false);
+
+    const visibleLinks = getConfiguredSocialLinks({
+      facebook: 'https://facebook.com',
+      instagram: 'https://instagram.com/lahore_mart_official',
+      whatsapp: '0321 9876543',
+    });
+    expect(visibleLinks.map((l) => l.platform)).toEqual(['instagram', 'whatsapp']);
+    expect(visibleLinks[1].url).toBe('https://wa.me/923219876543');
+  });
+
+  it('enforces post-compression Storage quota checks and prevents negative storageBytes', async () => {
+    const {
+      calculateNextStorageBytes,
+      evaluateStorageQuota,
+      mapFirebaseStorageError,
+    } = await import('../src/services/storageService');
+
+    expect(calculateNextStorageBytes(500, -1200)).toBe(0);
+    expect(calculateNextStorageBytes(500, 300)).toBe(800);
+
+    const withinQuota = evaluateStorageQuota(10 * 1024 * 1024, 25, 1024 * 1024);
+    expect(withinQuota.allowed).toBe(true);
+
+    const exceededQuota = evaluateStorageQuota(24.8 * 1024 * 1024, 25, 512 * 1024);
+    expect(exceededQuota.allowed).toBe(false);
+    expect(exceededQuota.reason).toContain('Storage quota reached');
+
+    expect(mapFirebaseStorageError({ code: 'storage/unauthorized' })).toContain('storage.rules');
+    expect(mapFirebaseStorageError({ code: 'storage/bucket-not-found' })).toContain('bucket');
+  });
+
+  it('preserves unrelated StoreSettings sections when partially updating Appearance vs Payment Settings', async () => {
+    const { mergeStoreSettingsPatch } = await import('../src/services/tenantService');
+    const { INITIAL_SETTINGS } = await import('../src/data/seedData');
+
+    const base = {
+      ...INITIAL_SETTINGS,
+      siteName: 'Lahore Mart',
+      codEnabled: false,
+      bankDetails: { ...INITIAL_SETTINGS.bankDetails, bankName: 'Meezan Bank', enabled: true },
+      socialLinks: { instagram: 'https://instagram.com/lahoremart' },
+    };
+
+    const afterAppearancePatch = mergeStoreSettingsPatch(base, {
+      primaryColor: '#111827',
+      seoTitle: 'Lahore Mart Official',
+    });
+    expect(afterAppearancePatch.codEnabled).toBe(false);
+    expect(afterAppearancePatch.bankDetails.bankName).toBe('Meezan Bank');
+    expect(afterAppearancePatch.socialLinks?.instagram).toBe('https://instagram.com/lahoremart');
+    expect(afterAppearancePatch.primaryColor).toBe('#111827');
+
+    const afterPaymentPatch = mergeStoreSettingsPatch(afterAppearancePatch, {
+      shippingFee: 300,
+    });
+    expect(afterPaymentPatch.seoTitle).toBe('Lahore Mart Official');
+    expect(afterPaymentPatch.shippingFee).toBe(300);
+    expect(afterPaymentPatch.socialLinks?.instagram).toBe('https://instagram.com/lahoremart');
+  });
+
+  it('keeps checkout payment proofs strictly private & enforces authenticated proof access in rules & backend', () => {
+    const checkoutSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/pages/CheckoutPage.tsx'), 'utf-8');
+    const firestoreRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'firestore.rules'), 'utf-8');
+    const storageRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'storage.rules'), 'utf-8');
+    const serverSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'server.ts'), 'utf-8');
+
+    expect(checkoutSrc).toContain('uploadCheckoutPaymentProof');
+    expect(firestoreRules).toContain('match /payment_receipts/{receiptId}');
+    expect(firestoreRules).toContain('match /platform_payment_receipts/{receiptId}');
+    expect(firestoreRules).toContain('match /newsletter_subscribers/{subId}');
+    expect(storageRules).toContain('match /platform/brand/{allPaths=**}');
+
+    expect(serverSrc).toContain('Number(process.env.PORT) || 3000');
+    expect(serverSrc).toContain("app.get('/api/payments/proof'");
+    expect(serverSrc).toContain("app.post('/api/uploads/payment-proof'");
+    expect(serverSrc).toContain("app.post('/api/newsletter/subscribe'");
+    expect(serverSrc).toContain('authoritativeSubtotal');
+    expect(serverSrc).toContain('authoritativeTotal');
+    expect(serverSrc).toContain('verifyFirebaseIdToken');
+    expect(serverSrc).toContain('Access-Control-Allow-Origin');
+  });
+
+  it('builds dynamic platform SEO metadata with Super Admin overrides cleanly', () => {
+    const seo = buildPlatformSeoTags('https://bazaarpk.com/', {
+      platformName: 'BazaarPK Pro',
+      seoTitle: 'BazaarPK Pro – Pakistan Multi-Tenant SaaS',
+      seoDescription: 'Custom SaaS meta description from Super Admin.',
+      ogImageUrl: 'https://cdn.example.com/platform-og.webp',
+      currency: 'PKR',
+    });
+
+    expect(seo.siteName).toBe('BazaarPK Pro');
+    expect(seo.title).toBe('BazaarPK Pro – Pakistan Multi-Tenant SaaS');
+    expect(seo.description).toBe('Custom SaaS meta description from Super Admin.');
+    expect(seo.imageUrl).toBe('https://cdn.example.com/platform-og.webp');
+    expect(seo.jsonLd.name).toBe('BazaarPK Pro');
+  });
+});
+
 

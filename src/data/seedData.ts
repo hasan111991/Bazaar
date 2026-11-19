@@ -214,9 +214,20 @@ export function getFulfillmentLabel(method?: FulfillmentMethod | string): string
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   platformName: 'BazaarPK Cloud',
   tagline: 'Multi-Tenant General Store Commerce OS for Pakistan',
+  logoUrl: '',
+  websiteUrl: '',
+  announcement: '',
   supportEmail: 'hasanaamir815@gmail.com',
   supportPhone: '+92 300 1234567',
   whatsappNumber: '+923001234567',
+  seoTitle: 'BazaarPK Cloud – Smart Business Management & Online Store SaaS',
+  seoDescription:
+    'Manage products, stock inventory, POS billing, Khata credit ledger, and your own online storefront across Pakistan with COD, EasyPaisa, JazzCash & Self-Pickup.',
+  ogImageUrl: '',
+  canonicalDomain: '',
+  currency: 'PKR',
+  currencySymbol: 'Rs.',
+  socialLinks: {},
   easypaisaDetails: {
     enabled: true,
     accountTitle: 'BazaarPK Cloud SaaS',
@@ -230,6 +241,7 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
     instructions: 'Transfer via JazzCash App or *786# and upload your payment receipt screenshot.',
   },
   bankDetails: {
+    enabled: true,
     bankName: 'Meezan Bank Limited',
     accountTitle: 'BazaarPK Cloud Technologies',
     accountNumber: '01020102938475',
@@ -372,6 +384,7 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
 export const INITIAL_SETTINGS: StoreSettings = {
   siteName: 'BazaarPK',
   logoUrl: '',
+  websiteUrl: '',
   primaryColor: '#065f46',
   accentColor: '#d97706',
   announcement: '🇵🇰 Free Delivery across Pakistan above Rs. 3,500! COD, EasyPaisa & JazzCash accepted.',
@@ -383,6 +396,8 @@ export const INITIAL_SETTINGS: StoreSettings = {
   businessHours: 'Mon – Sat: 10:00 AM – 10:00 PM · Sun: 2:00 PM – 9:00 PM',
   seoTitle: '',
   seoDescription: '',
+  ogImageUrl: '',
+  codEnabled: true,
   shippingFee: 200,
   freeShippingThreshold: 3500,
   currency: 'PKR',
@@ -390,6 +405,7 @@ export const INITIAL_SETTINGS: StoreSettings = {
   aboutUs:
     'Welcome to our store! We curate quality essentials, artisan craftsmanship, and everyday goods delivered swiftly across Pakistan with Cash on Delivery, EasyPaisa, JazzCash, and convenient Self-Pickup.',
   bankDetails: {
+    enabled: true,
     bankName: 'Meezan Bank Limited',
     accountTitle: 'BazaarPK Retail Solutions',
     accountNumber: '01020102938475',
@@ -416,11 +432,7 @@ export const INITIAL_SETTINGS: StoreSettings = {
     contactPhone: '+92 300 1234567',
     instructions: 'Bring your Order Number (PK-XXXXXX) and registered mobile number when collecting your parcel. Zero shipping fee!',
   },
-  socialLinks: {
-    facebook: 'https://facebook.com',
-    instagram: 'https://instagram.com',
-    whatsapp: 'https://wa.me/923001234567',
-  },
+  socialLinks: {},
 };
 
 export const INITIAL_CATEGORIES: Category[] = [

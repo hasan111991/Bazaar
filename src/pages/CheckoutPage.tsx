@@ -25,7 +25,7 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../context/TenantContext';
 import { createShopOrder } from '../services/tenantService';
-import { uploadShopImage } from '../services/storageService';
+import { uploadCheckoutPaymentProof } from '../services/storageService';
 import {
   PAKISTAN_CITIES,
   formatPKR,
@@ -75,12 +75,18 @@ export const CheckoutPage: React.FC = () => {
     }
   }, [currentUser, userProfile]);
 
+  const codEnabled = settings.codEnabled !== false;
+  const easypaisaEnabled = settings.easypaisaDetails?.enabled !== false;
+  const jazzcashEnabled = settings.jazzcashDetails?.enabled !== false;
+  const bankEnabled = settings.bankDetails?.enabled !== false;
+
   // Payment Selection
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [bankRef, setBankRef] = useState('');
   const [walletRef, setWalletRef] = useState('');
   const [senderWalletPhone, setSenderWalletPhone] = useState('');
   const [paymentProofImage, setPaymentProofImage] = useState<string>('');
+  const [paymentProofPreviewUrl, setPaymentProofPreviewUrl] = useState<string>('');
   const [paymentProofFileName, setPaymentProofFileName] = useState<string>('');
   const [uploadingProof, setUploadingProof] = useState(false);
   const [checkoutSessionId] = useState(
@@ -97,21 +103,45 @@ export const CheckoutPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    const enabledMap: Record<PaymentMethod, boolean> = {
+      cod: codEnabled,
+      easypaisa: easypaisaEnabled,
+      jazzcash: jazzcashEnabled,
+      bank_transfer: bankEnabled,
+      online: true,
+    };
+    if (!enabledMap[paymentMethod]) {
+      const firstAvailable = (['cod', 'easypaisa', 'jazzcash', 'bank_transfer', 'online'] as PaymentMethod[]).find(
+        (m) => enabledMap[m]
+      );
+      if (firstAvailable) setPaymentMethod(firstAvailable);
+    }
+  }, [codEnabled, easypaisaEnabled, jazzcashEnabled, bankEnabled, paymentMethod]);
+
+  useEffect(() => {
+    return () => {
+      if (paymentProofPreviewUrl) {
+        URL.revokeObjectURL(paymentProofPreviewUrl);
+      }
+    };
+  }, [paymentProofPreviewUrl]);
+
   const handleProofFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadingProof(true);
     setErrorMessage(null);
     try {
-      const uploaded = await uploadShopImage(file, {
-        shopId,
-        folder: 'payments',
-        subPath: checkoutSessionId,
-        maxDimension: 1200,
-      });
+      const uploaded = await uploadCheckoutPaymentProof(shopId, checkoutSessionId, file);
+      if (paymentProofPreviewUrl) {
+        URL.revokeObjectURL(paymentProofPreviewUrl);
+      }
+      const localPreview = URL.createObjectURL(file);
+      setPaymentProofPreviewUrl(localPreview);
       setPaymentProofImage(uploaded.url);
       setPaymentProofFileName(file.name);
-      showToast('Payment proof image uploaded!', 'success');
+      showToast('Payment proof uploaded securely (private to store admins)!', 'success');
     } catch (err: any) {
       showToast(err.message || 'Could not upload payment proof', 'error');
       setErrorMessage(err.message || 'Could not upload payment proof image.');
@@ -131,6 +161,8 @@ export const CheckoutPage: React.FC = () => {
           <button
             type="button"
             onClick={() => {
+              if (paymentProofPreviewUrl) URL.revokeObjectURL(paymentProofPreviewUrl);
+              setPaymentProofPreviewUrl('');
               setPaymentProofImage('');
               setPaymentProofFileName('');
             }}
@@ -144,7 +176,7 @@ export const CheckoutPage: React.FC = () => {
       {paymentProofImage ? (
         <div className="flex items-center gap-3 p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200">
           <img
-            src={paymentProofImage}
+            src={paymentProofPreviewUrl || paymentProofImage}
             alt="Payment proof preview"
             className="w-14 h-14 object-cover rounded-lg border border-emerald-300 shrink-0 bg-white"
           />
@@ -749,41 +781,43 @@ export const CheckoutPage: React.FC = () => {
 
               <div className="space-y-3">
                 {/* Option 1: Cash on Delivery */}
-                <label
-                  className={`block p-3.5 sm:p-4 rounded-2xl border-2 cursor-pointer transition ${
-                    paymentMethod === 'cod'
-                      ? 'border-emerald-700 bg-emerald-50/50'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="cod"
-                        checked={paymentMethod === 'cod'}
-                        onChange={() => setPaymentMethod('cod')}
-                        className="mt-1 text-emerald-700 focus:ring-emerald-600"
-                      />
-                      <div>
-                        <span className="font-bold text-sm text-slate-900 block">
-                          {fulfillmentMethod === 'self_pickup'
-                            ? 'Pay at Pickup Counter (Cash)'
-                            : 'Cash on Delivery (COD)'}
-                        </span>
-                        <span className="text-xs text-slate-500">
-                          {fulfillmentMethod === 'self_pickup'
-                            ? 'Pay in cash when collecting your order from our pickup desk.'
-                            : 'Pay cash to the courier rider when your parcel arrives at your doorstep.'}
-                        </span>
+                {codEnabled && (
+                  <label
+                    className={`block p-3.5 sm:p-4 rounded-2xl border-2 cursor-pointer transition ${
+                      paymentMethod === 'cod'
+                        ? 'border-emerald-700 bg-emerald-50/50'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="radio"
+                          name="paymentMethod"
+                          value="cod"
+                          checked={paymentMethod === 'cod'}
+                          onChange={() => setPaymentMethod('cod')}
+                          className="mt-1 text-emerald-700 focus:ring-emerald-600"
+                        />
+                        <div>
+                          <span className="font-bold text-sm text-slate-900 block">
+                            {fulfillmentMethod === 'self_pickup'
+                              ? 'Pay at Pickup Counter (Cash)'
+                              : 'Cash on Delivery (COD)'}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            {fulfillmentMethod === 'self_pickup'
+                              ? 'Pay in cash when collecting your order from our pickup desk.'
+                              : 'Pay cash to the courier rider when your parcel arrives at your doorstep.'}
+                          </span>
+                        </div>
                       </div>
+                      <span className="text-[11px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md shrink-0">
+                        Most Popular 🇵🇰
+                      </span>
                     </div>
-                    <span className="text-[11px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md shrink-0">
-                      Most Popular 🇵🇰
-                    </span>
-                  </div>
-                </label>
+                  </label>
+                )}
 
                 {/* Option 2: EasyPaisa Mobile Wallet */}
                 {settings.easypaisaDetails?.enabled !== false && (
@@ -1016,6 +1050,7 @@ export const CheckoutPage: React.FC = () => {
                 )}
 
                 {/* Option 4: Direct Bank Transfer */}
+                {bankEnabled && (
                 <label
                   className={`block p-3.5 sm:p-4 rounded-2xl border-2 cursor-pointer transition ${
                     paymentMethod === 'bank_transfer'
@@ -1115,6 +1150,7 @@ export const CheckoutPage: React.FC = () => {
                     </div>
                   )}
                 </label>
+                )}
 
                 {/* Option 5: Online Payment Gateway */}
                 <label

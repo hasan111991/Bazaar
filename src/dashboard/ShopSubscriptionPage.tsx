@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, CheckCircle2, Loader2, X } from 'lucide-react';
+import { Check, CheckCircle2, Loader2, X, AlertCircle } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getSubscriptionPlans,
@@ -28,10 +28,12 @@ export const ShopSubscriptionPage: React.FC = () => {
   const [proofImages, setProofImages] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submittedMsg, setSubmittedMsg] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const loadBilling = async () => {
     if (!shopId) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       const [pList, stg, pays] = await Promise.all([
         getSubscriptionPlans(true),
@@ -41,6 +43,8 @@ export const ShopSubscriptionPage: React.FC = () => {
       setPlans(pList);
       setPlatformSettings(stg);
       setPayments(pays);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to load subscription billing details.');
     } finally {
       setLoading(false);
     }
@@ -54,6 +58,7 @@ export const ShopSubscriptionPage: React.FC = () => {
     e.preventDefault();
     if (!selectedPlan || !shop || isReadOnly) return;
     setSubmitting(true);
+    setErrorMsg(null);
     try {
       const amount = billingCycle === 'yearly' ? selectedPlan.yearlyPrice : selectedPlan.monthlyPrice;
       await submitSubscriptionPayment({
@@ -77,6 +82,8 @@ export const ShopSubscriptionPage: React.FC = () => {
       setProofImages([]);
       setSubmittedMsg(true);
       await loadBilling();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not submit payment proof.');
     } finally {
       setSubmitting(false);
     }
@@ -98,6 +105,12 @@ export const ShopSubscriptionPage: React.FC = () => {
           View plan quotas, submit subscription payment proofs, and track Super Admin approvals.
         </p>
       </div>
+
+      {errorMsg && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" /> {errorMsg}
+        </div>
+      )}
 
       {submittedMsg && (
         <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs font-semibold flex items-center gap-2">

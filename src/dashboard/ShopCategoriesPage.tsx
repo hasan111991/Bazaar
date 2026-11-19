@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, Edit2, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Loader2, AlertCircle } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getShopCategories,
@@ -16,12 +16,16 @@ export const ShopCategoriesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const loadCats = async () => {
     if (!shopId) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       setCategories(await getShopCategories(shopId));
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not load categories.');
     } finally {
       setLoading(false);
     }
@@ -35,12 +39,25 @@ export const ShopCategoriesPage: React.FC = () => {
     e.preventDefault();
     if (!editing || isReadOnly) return;
     setSaving(true);
+    setErrorMsg(null);
     try {
       await saveShopCategory(shopId, editing);
       setEditing(null);
       await loadCats();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to save category.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async (catId: string) => {
+    setErrorMsg(null);
+    try {
+      await deleteShopCategory(shopId, catId);
+      await loadCats();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to delete category.');
     }
   };
 
@@ -61,6 +78,12 @@ export const ShopCategoriesPage: React.FC = () => {
           </button>
         )}
       </div>
+
+      {errorMsg && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" /> {errorMsg}
+        </div>
+      )}
 
       {loading ? (
         <div className="py-16 flex justify-center text-xs text-slate-500 gap-2">
@@ -92,7 +115,7 @@ export const ShopCategoriesPage: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteShopCategory(shopId, cat.id).then(loadCats)}
+                    onClick={() => handleDelete(cat.id)}
                     className="p-1.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

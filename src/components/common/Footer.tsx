@@ -1,16 +1,56 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, Phone, MapPin, Send, ShieldCheck, Truck, RefreshCw, Headphones, ExternalLink } from 'lucide-react';
+import {
+  Mail,
+  Phone,
+  MapPin,
+  Send,
+  ShieldCheck,
+  Truck,
+  RefreshCw,
+  Headphones,
+  ExternalLink,
+  Globe,
+  MessageCircle,
+  Youtube,
+  Linkedin,
+  Facebook,
+  Instagram,
+  Music2,
+  Loader2,
+} from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { useToast } from './Toast';
-import { getShopCategories } from '../../services/tenantService';
+import { getShopCategories, subscribeToShopNewsletter } from '../../services/tenantService';
 import { Category } from '../../types';
 import { DEFAULT_SHOP_ID, INITIAL_CATEGORIES } from '../../data/seedData';
+import { getConfiguredSocialLinks, SocialPlatformKey } from '../../utils/socialLinks';
+
+function renderSocialIcon(platform: SocialPlatformKey) {
+  switch (platform) {
+    case 'facebook':
+      return <Facebook className="w-4 h-4" />;
+    case 'instagram':
+      return <Instagram className="w-4 h-4" />;
+    case 'tiktok':
+      return <Music2 className="w-4 h-4" />;
+    case 'youtube':
+      return <Youtube className="w-4 h-4" />;
+    case 'linkedin':
+      return <Linkedin className="w-4 h-4" />;
+    case 'whatsapp':
+      return <MessageCircle className="w-4 h-4" />;
+    default:
+      return <Globe className="w-4 h-4" />;
+  }
+}
 
 export const Footer: React.FC = () => {
   const { shopId, settings, storeBasePath } = useTenant();
   const { showToast } = useToast();
   const [newsletterEmail, setNewsletterEmail] = useState('');
+  const [subscribing, setSubscribing] = useState(false);
+  const [subscribeError, setSubscribeError] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
@@ -32,14 +72,26 @@ export const Footer: React.FC = () => {
     };
   }, [shopId]);
 
-  const handleSubscribe = (e: React.FormEvent) => {
+  const handleSubscribe = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newsletterEmail.trim()) return;
-    showToast(`Shukriya! You are now subscribed to ${settings.siteName} offers & discounts.`, 'success');
-    setNewsletterEmail('');
+    if (!newsletterEmail.trim() || subscribing) return;
+    setSubscribeError(null);
+    setSubscribing(true);
+    try {
+      await subscribeToShopNewsletter(shopId, newsletterEmail, 'footer');
+      showToast(`Shukriya! You are now subscribed to ${settings.siteName} offers & discounts.`, 'success');
+      setNewsletterEmail('');
+    } catch (err: any) {
+      const msg = err?.message || 'Could not complete newsletter subscription.';
+      setSubscribeError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setSubscribing(false);
+    }
   };
 
   const brandColor = settings.primaryColor || '#065f46';
+  const configuredSocials = getConfiguredSocialLinks(settings.socialLinks);
 
   return (
     <footer className="bg-slate-950 text-slate-300 pt-12 sm:pt-14 pb-8 border-t border-slate-800">
@@ -52,7 +104,7 @@ export const Footer: React.FC = () => {
             </div>
             <div>
               <h4 className="font-bold text-white text-sm">Nationwide Delivery</h4>
-              <p className="text-xs text-slate-400 mt-0.5">TCS, Leopards & Trax express to all cities</p>
+              <p className="text-xs text-slate-400 mt-0.5">TCS, Leopards &amp; Trax express to all cities</p>
             </div>
           </div>
 
@@ -61,8 +113,8 @@ export const Footer: React.FC = () => {
               <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <h4 className="font-bold text-white text-sm">COD & Mobile Wallets</h4>
-              <p className="text-xs text-slate-400 mt-0.5">Cash on Delivery, EasyPaisa & JazzCash</p>
+              <h4 className="font-bold text-white text-sm">COD &amp; Mobile Wallets</h4>
+              <p className="text-xs text-slate-400 mt-0.5">Cash on Delivery, EasyPaisa &amp; JazzCash</p>
             </div>
           </div>
 
@@ -72,7 +124,7 @@ export const Footer: React.FC = () => {
             </div>
             <div>
               <h4 className="font-bold text-white text-sm">7-Day Easy Returns</h4>
-              <p className="text-xs text-slate-400 mt-0.5">Hassle-free exchange & refund guarantee</p>
+              <p className="text-xs text-slate-400 mt-0.5">Hassle-free exchange &amp; refund guarantee</p>
             </div>
           </div>
 
@@ -135,7 +187,38 @@ export const Footer: React.FC = () => {
                 <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>{settings.contactEmail}</span>
               </div>
+              {settings.websiteUrl && (
+                <div className="flex items-center gap-2.5">
+                  <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <a
+                    href={settings.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-emerald-400 transition truncate"
+                  >
+                    {settings.websiteUrl.replace(/^https?:\/\//i, '')}
+                  </a>
+                </div>
+              )}
             </div>
+
+            {configuredSocials.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {configuredSocials.map((entry) => (
+                  <a
+                    key={entry.platform}
+                    href={entry.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${settings.siteName} on ${entry.label}`}
+                    title={entry.label}
+                    className="w-9 h-9 rounded-lg bg-slate-900 border border-slate-800 hover:border-emerald-500/70 hover:text-emerald-400 text-slate-300 flex items-center justify-center transition"
+                  >
+                    {renderSocialIcon(entry.platform)}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Quick links */}
@@ -164,7 +247,7 @@ export const Footer: React.FC = () => {
               </li>
               <li>
                 <Link to={`${storeBasePath}/return-policy`} className="hover:text-emerald-400 transition">
-                  Return & Exchange Policy
+                  Return &amp; Exchange Policy
                 </Link>
               </li>
               <li>
@@ -222,25 +305,41 @@ export const Footer: React.FC = () => {
                 onChange={(e) => setNewsletterEmail(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
               />
+              {subscribeError && (
+                <p className="text-[11px] text-rose-400">{subscribeError}</p>
+              )}
               <button
                 type="submit"
-                className="w-full py-2 px-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
+                disabled={subscribing}
+                className="w-full py-2 px-3 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
               >
-                <Send className="w-3.5 h-3.5" /> Subscribe Now
+                {subscribing ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Subscribing...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" /> Subscribe Now
+                  </>
+                )}
               </button>
             </form>
 
             <div className="mt-4 pt-3 border-t border-slate-800">
               <span className="text-[11px] text-slate-500 block mb-1.5">Supported Payments:</span>
               <div className="flex flex-wrap gap-1.5 text-[10px] text-slate-300 font-medium">
-                <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800">Cash on Delivery</span>
+                {settings.codEnabled !== false && (
+                  <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800">Cash on Delivery</span>
+                )}
                 {settings.easypaisaDetails?.enabled !== false && (
                   <span className="bg-slate-900 px-2 py-1 rounded border border-emerald-800/60 text-emerald-300">EasyPaisa</span>
                 )}
                 {settings.jazzcashDetails?.enabled !== false && (
                   <span className="bg-slate-900 px-2 py-1 rounded border border-rose-800/60 text-rose-300">JazzCash</span>
                 )}
-                <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800">Bank Transfer</span>
+                {settings.bankDetails?.enabled !== false && (
+                  <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800">Bank Transfer</span>
+                )}
               </div>
             </div>
           </div>

@@ -56,12 +56,13 @@ export function buildShopSeoTags(params: {
   const storeName = (shop?.name || settings?.siteName || 'BazaarPK Store').trim();
   const city = (shop?.city || settings?.city || 'Pakistan').trim();
   const storeLogo = shop?.logoUrl || settings?.logoUrl || '';
+  const storeOgImage = settings?.ogImageUrl || shop?.ogImageUrl || storeLogo || '';
   const currency = settings?.currency || 'PKR';
 
   // 1. Product Detail SEO (Schema.org Product + Offer)
   if (product) {
     const activePrice = product.salePrice ?? product.regularPrice ?? 0;
-    const productImage = product.images?.[0] || storeLogo || undefined;
+    const productImage = product.images?.[0] || storeOgImage || undefined;
     const rawTitle = `${product.title} – Rs. ${Math.round(activePrice).toLocaleString('en-PK')} | ${storeName}`;
     const rawDesc =
       product.description?.trim() ||
@@ -131,13 +132,13 @@ export function buildShopSeoTags(params: {
     canonicalUrl,
     siteName: storeName,
     ogType: 'website',
-    imageUrl: storeLogo || undefined,
+    imageUrl: storeOgImage || undefined,
     jsonLd: {
       '@context': 'https://schema.org',
       '@type': 'Store',
       name: storeName,
       url: canonicalUrl,
-      image: storeLogo || undefined,
+      image: storeOgImage || undefined,
       description: clampText(rawDesc, 200),
       telephone: shop?.publicContactPhone || settings?.contactPhone || undefined,
       email: shop?.publicSupportEmail || settings?.contactEmail || undefined,
@@ -151,28 +152,49 @@ export function buildShopSeoTags(params: {
   };
 }
 
-export function buildPlatformSeoTags(canonicalUrl = resolveCanonicalUrl('/')): GeneratedSeoTags {
-  const title = 'BazaarPK Cloud – Smart Business Management & Online Store SaaS';
+export function buildPlatformSeoTags(
+  canonicalUrl = resolveCanonicalUrl('/'),
+  platformSettings?: {
+    platformName?: string;
+    seoTitle?: string;
+    seoDescription?: string;
+    ogImageUrl?: string;
+    logoUrl?: string;
+    currency?: string;
+    canonicalDomain?: string;
+  } | null
+): GeneratedSeoTags {
+  const siteName = (platformSettings?.platformName || 'BazaarPK Cloud').trim();
+  const title =
+    (platformSettings?.seoTitle || '').trim() ||
+    `${siteName} – Smart Business Management & Online Store SaaS`;
   const description =
+    (platformSettings?.seoDescription || '').trim() ||
     'Manage products, stock inventory, POS billing, Khata credit ledger, and your own online storefront across Pakistan with COD, EasyPaisa, JazzCash & Self-Pickup.';
+  const resolvedCanonical = platformSettings?.canonicalDomain
+    ? platformSettings.canonicalDomain
+    : canonicalUrl;
+  const imageUrl = platformSettings?.ogImageUrl || platformSettings?.logoUrl || undefined;
 
   return {
-    title,
-    description,
-    canonicalUrl,
-    siteName: 'BazaarPK Cloud',
+    title: clampText(title, 70),
+    description: clampText(description, 165),
+    canonicalUrl: resolvedCanonical,
+    siteName,
     ogType: 'website',
+    imageUrl,
     jsonLd: {
       '@context': 'https://schema.org',
       '@type': 'WebApplication',
-      name: 'BazaarPK Cloud',
+      name: siteName,
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'All',
       description,
+      image: imageUrl,
       offers: {
         '@type': 'Offer',
         price: '0',
-        priceCurrency: 'PKR',
+        priceCurrency: platformSettings?.currency || 'PKR',
       },
     },
   };

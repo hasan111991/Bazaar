@@ -7,6 +7,7 @@ import {
   Loader2,
   X,
   CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
@@ -20,6 +21,7 @@ import {
   getPaymentMethodLabel,
   getFulfillmentLabel,
 } from '../data/seedData';
+import { PrivateReceiptImage } from '../components/common/PrivateReceiptImage';
 
 const STATUSES: OrderStatus[] = [
   'Pending',
@@ -42,13 +44,17 @@ export const ShopOrdersPage: React.FC = () => {
   const [courierName, setCourierName] = useState('TCS Express');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const loadOrders = async () => {
     if (!shopId) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       const list = await getAllShopOrdersAdmin(shopId);
       setOrders(list);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to load orders.');
     } finally {
       setLoading(false);
     }
@@ -82,6 +88,7 @@ export const ShopOrdersPage: React.FC = () => {
   ) => {
     if (!selectedOrder || isReadOnly) return;
     setSaving(true);
+    setErrorMsg(null);
     try {
       await updateShopOrderStatus(
         shopId,
@@ -106,6 +113,8 @@ export const ShopOrdersPage: React.FC = () => {
             }
           : null
       );
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not update order status.');
     } finally {
       setSaving(false);
     }
@@ -152,6 +161,12 @@ export const ShopOrdersPage: React.FC = () => {
           <Download className="w-3.5 h-3.5" /> Export Orders CSV
         </button>
       </div>
+
+      {errorMsg && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center gap-2 no-print">
+          <AlertCircle className="w-4 h-4 shrink-0" /> {errorMsg}
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 no-print">
         <div className="relative">
@@ -296,7 +311,7 @@ export const ShopOrdersPage: React.FC = () => {
             {selectedOrder.paymentProofImage && (
               <div className="space-y-1.5">
                 <p className="text-xs font-bold text-slate-800">Uploaded Payment Proof Receipt</p>
-                <img
+                <PrivateReceiptImage
                   src={selectedOrder.paymentProofImage}
                   alt="Customer payment receipt"
                   className="max-h-60 rounded-xl border border-slate-200 object-contain bg-slate-50"

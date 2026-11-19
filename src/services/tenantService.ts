@@ -35,6 +35,7 @@ import {
   ShopPageContent,
   Shop,
   ShopCustomerSummary,
+  NewsletterSubscriber,
 } from '../types';
 import {
   INITIAL_SETTINGS,
@@ -48,6 +49,10 @@ import {
   deriveTrackingTokenHash,
   deriveTrackingDocId,
 } from '../utils/trackingCrypto';
+import {
+  normalizeAndValidateSocialLinks,
+  normalizeOptionalHttpUrl,
+} from '../utils/socialLinks';
 
 // ====================================================
 // PLAN LIMIT & SUBSCRIPTION ENFORCEMENT HELPERS
@@ -663,15 +668,50 @@ export async function trackShopOrder(shopId: string, ref: string, token?: string
 // SETTINGS (PUBLIC vs PRIVATE SPLIT) & CMS PAGES
 // ====================================================
 
+export function mergeStoreSettingsPatch(
+  existing: StoreSettings,
+  patch: Partial<StoreSettings>
+): StoreSettings {
+  const merged: StoreSettings = {
+    ...existing,
+    ...patch,
+    bankDetails: patch.bankDetails
+      ? { ...existing.bankDetails, ...patch.bankDetails }
+      : existing.bankDetails,
+    easypaisaDetails: patch.easypaisaDetails
+      ? { ...existing.easypaisaDetails, ...patch.easypaisaDetails }
+      : existing.easypaisaDetails,
+    jazzcashDetails: patch.jazzcashDetails
+      ? { ...existing.jazzcashDetails, ...patch.jazzcashDetails }
+      : existing.jazzcashDetails,
+    selfPickupDetails: patch.selfPickupDetails
+      ? { ...existing.selfPickupDetails, ...patch.selfPickupDetails }
+      : existing.selfPickupDetails,
+    socialLinks:
+      patch.socialLinks !== undefined
+        ? normalizeAndValidateSocialLinks(patch.socialLinks)
+        : existing.socialLinks,
+  };
+  if (patch.websiteUrl !== undefined) {
+    merged.websiteUrl = normalizeOptionalHttpUrl(patch.websiteUrl, 'Store Website URL');
+  }
+  return merged;
+}
+
 function normalizeStoreSettings(data: Partial<StoreSettings>): StoreSettings {
   return {
     ...INITIAL_SETTINGS,
     ...data,
-    bankDetails: { ...INITIAL_SETTINGS.bankDetails, ...(data.bankDetails || {}) },
+    codEnabled: data.codEnabled !== false,
+    bankDetails: {
+      ...INITIAL_SETTINGS.bankDetails,
+      ...(data.bankDetails || {}),
+      enabled: data.bankDetails?.enabled !== false,
+    },
     easypaisaDetails: { ...INITIAL_SETTINGS.easypaisaDetails, ...(data.easypaisaDetails || {}) },
     jazzcashDetails: { ...INITIAL_SETTINGS.jazzcashDetails, ...(data.jazzcashDetails || {}) },
     selfPickupDetails: { ...INITIAL_SETTINGS.selfPickupDetails, ...(data.selfPickupDetails || {}) },
-    socialLinks: { ...INITIAL_SETTINGS.socialLinks, ...(data.socialLinks || {}) },
+    socialLinks: { ...(data.socialLinks || {}) },
   };
 }
 
@@ -685,7 +725,8 @@ export async function getShopPublicSettings(shopId: string = DEFAULT_SHOP_ID): P
       return normalizeStoreSettings(pubSnap.data() as Partial<StoreSettings>);
     }
     return INITIAL_SETTINGS;
-  } catch {
+  } catch (err) {
+    console.warn(`Could not read public settings for shop ${shopId}:`, err);
     return INITIAL_SETTINGS;
   }
 }
@@ -714,17 +755,21 @@ export async function getShopSettings(shopId: string = DEFAULT_SHOP_ID): Promise
       return normalizeStoreSettings(genSnap.data() as Partial<StoreSettings>);
     }
     return INITIAL_SETTINGS;
-  } catch {
+  } catch (err) {
+    console.warn(`Could not load shop settings for ${shopId}:`, err);
     return INITIAL_SETTINGS;
   }
 }
 
-export async function updateShopSettings(shopId: string, settings: StoreSettings): Promise<void> {
+export async function updateShopSettings(shopId: string, settingsPatch: Partial<StoreSettings>): Promise<StoreSettings> {
   const nowIso = new Date().toISOString();
+  const current = await getShopSettings(shopId);
+  const settings = mergeStoreSettingsPatch(current, settingsPatch);
 
   const publicSettingsPayload = stripUndefined({
     siteName: settings.siteName,
     logoUrl: settings.logoUrl || '',
+    websiteUrl: settings.websiteUrl || '',
     primaryColor: settings.primaryColor || '#065f46',
     accentColor: settings.accentColor || '#d97706',
     announcement: settings.announcement,
@@ -741,6 +786,8 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
     businessHours: settings.businessHours,
     seoTitle: settings.seoTitle,
     seoDescription: settings.seoDescription,
+    ogImageUrl: settings.ogImageUrl || '',
+    codEnabled: settings.codEnabled !== false,
     selfPickupDetails: settings.selfPickupDetails,
     socialLinks: settings.socialLinks,
     // Buyer checkout transfer details ONLY exposed on public doc when enabled by merchant
@@ -750,7 +797,10 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
     jazzcashDetails: settings.jazzcashDetails?.enabled
       ? settings.jazzcashDetails
       : { enabled: false, accountTitle: '', accountNumber: '' },
-    bankDetails: settings.bankDetails,
+    bankDetails:
+      settings.bankDetails?.enabled !== false
+        ? { ...settings.bankDetails, enabled: true }
+        : { enabled: false, bankName: '', accountTitle: '', accountNumber: '', iban: '' },
     updatedAt: nowIso,
   });
 
@@ -763,7 +813,7 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
 
   try {
     const batch = writeBatch(db);
-    batch.set(doc(db, 'shops', shopId, 'settings', 'public'), publicSettingsPayload);
+    batch.set(doc(db, 'shops', shopId, 'settings', 'public'), publicSettingsPayload, { merge: true });
     batch.set(doc(db, 'shops', shopId, 'settings', 'private'), privateSettingsPayload, { merge: true });
     batch.update(
       doc(db, 'shops', shopId),
@@ -776,7 +826,10 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
         'theme.accentColor': settings.accentColor || '#d97706',
         'onboardingChecklist.logoUploaded': Boolean(settings.logoUrl),
         'onboardingChecklist.paymentConfigured': Boolean(
-          settings.easypaisaDetails?.enabled || settings.jazzcashDetails?.enabled || settings.bankDetails?.accountNumber
+          settings.codEnabled !== false ||
+            settings.easypaisaDetails?.enabled ||
+            settings.jazzcashDetails?.enabled ||
+            (settings.bankDetails?.enabled !== false && settings.bankDetails?.accountNumber)
         ),
         updatedAt: nowIso,
       })
@@ -788,6 +841,8 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
         slug: shopId,
         name: settings.siteName,
         logoUrl: settings.logoUrl || '',
+        websiteUrl: settings.websiteUrl || '',
+        ogImageUrl: settings.ogImageUrl || '',
         city: settings.city || '',
         publicContactPhone: settings.contactPhone || '',
         publicSupportEmail: settings.contactEmail || '',
@@ -795,14 +850,18 @@ export async function updateShopSettings(shopId: string, settings: StoreSettings
         businessHours: settings.businessHours || '',
         seoTitle: settings.seoTitle || '',
         seoDescription: settings.seoDescription || '',
-        'theme.primaryColor': settings.primaryColor || '#065f46',
-        'theme.accentColor': settings.accentColor || '#d97706',
+        socialLinks: settings.socialLinks || {},
+        theme: {
+          primaryColor: settings.primaryColor || '#065f46',
+          accentColor: settings.accentColor || '#d97706',
+        },
         updatedAt: nowIso,
       }),
       { merge: true }
     );
     await batch.commit();
     await logShopActivity(shopId, 'Updated Settings', 'settings', 'public', `Updated settings for ${settings.siteName}`);
+    return settings;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/settings/public`);
   }
@@ -1134,6 +1193,44 @@ export async function getShopContactMessages(shopId: string): Promise<ContactMes
 
 export async function updateShopContactMessageStatus(shopId: string, msgId: string, status: 'new' | 'resolved'): Promise<void> {
   await updateDoc(doc(db, 'shops', shopId, 'contact_messages', msgId), { status });
+}
+
+export async function subscribeToShopNewsletter(
+  shopId: string,
+  rawEmail: string,
+  source = 'footer'
+): Promise<string> {
+  const email = rawEmail.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('Please enter a valid email address.');
+  }
+
+  const safeId = `sub_${email.replace(/[^a-z0-9]/g, '_').slice(0, 80)}_${Date.now()}`;
+  const payload: NewsletterSubscriber = {
+    id: safeId,
+    shopId,
+    email,
+    source,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(doc(db, 'shops', shopId, 'newsletter_subscribers', safeId), payload);
+    return safeId;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/newsletter_subscribers/${safeId}`);
+  }
+}
+
+export async function getShopNewsletterSubscribers(shopId: string): Promise<NewsletterSubscriber[]> {
+  try {
+    const snap = await getDocs(collection(db, 'shops', shopId, 'newsletter_subscribers'));
+    const list: NewsletterSubscriber[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as NewsletterSubscriber), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `shops/${shopId}/newsletter_subscribers`);
+  }
 }
 
 // ====================================================

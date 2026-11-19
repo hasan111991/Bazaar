@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 
-export const Hero3DShowcase: React.FC = () => {
+export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announcement }) => {
   const prefersReducedMotion = useReducedMotion();
   const [canHover, setCanHover] = useState(false);
   const [pointerOffset, setPointerOffset] = useState({ x: 0, y: 0 });
@@ -74,6 +74,11 @@ export const Hero3DShowcase: React.FC = () => {
       />
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {announcement && announcement.trim() && (
+          <div className="mb-7 rounded-xl border border-indigo-400/25 bg-indigo-500/10 px-4 py-2.5 text-center text-xs font-semibold text-cyan-200 backdrop-blur-md">
+            {announcement.trim()}
+          </div>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-10 items-center">
           {/* Left Copy Column */}
           <motion.div

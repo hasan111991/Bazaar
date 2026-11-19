@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, Edit2, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Loader2, AlertCircle } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getShopBanners,
@@ -15,12 +15,16 @@ export const ShopBannersPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Banner> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const loadBanners = async () => {
     if (!shopId) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       setBanners(await getShopBanners(shopId, true));
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to load banners.');
     } finally {
       setLoading(false);
     }
@@ -34,12 +38,25 @@ export const ShopBannersPage: React.FC = () => {
     e.preventDefault();
     if (!editing || isReadOnly) return;
     setSaving(true);
+    setErrorMsg(null);
     try {
       await saveShopBanner(shopId, editing);
       setEditing(null);
       await loadBanners();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to save promotional banner.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async (bannerId: string) => {
+    setErrorMsg(null);
+    try {
+      await deleteShopBanner(shopId, bannerId);
+      await loadBanners();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to delete banner.');
     }
   };
 
@@ -71,6 +88,12 @@ export const ShopBannersPage: React.FC = () => {
         )}
       </div>
 
+      {errorMsg && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" /> {errorMsg}
+        </div>
+      )}
+
       {loading ? (
         <div className="py-16 flex justify-center text-xs text-slate-500 gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-[#065F46]" /> Loading banners...
@@ -96,7 +119,7 @@ export const ShopBannersPage: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteShopBanner(shopId, b.id).then(loadBanners)}
+                      onClick={() => handleDelete(b.id)}
                       className="p-1.5 border border-red-200 text-red-600 rounded-lg"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

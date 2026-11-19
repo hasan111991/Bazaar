@@ -17,15 +17,45 @@ import {
   Store,
   Truck,
   Zap,
+  Globe,
+  Mail,
+  Phone,
+  Facebook,
+  Instagram,
+  Music2,
+  Youtube,
+  Linkedin,
+  MessageCircle,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ShopPublic, SubscriptionPlan } from '../../types';
+import { PlatformSettings, ShopPublic, SubscriptionPlan } from '../../types';
 import { DEFAULT_SHOP_ID, formatPKR } from '../../data/seedData';
 import { Tilt3DCard } from './Tilt3DCard';
+import { getConfiguredSocialLinks, SocialPlatformKey } from '../../utils/socialLinks';
+
+function renderPlatformSocialIcon(platform: SocialPlatformKey) {
+  switch (platform) {
+    case 'facebook':
+      return <Facebook className="w-4 h-4" />;
+    case 'instagram':
+      return <Instagram className="w-4 h-4" />;
+    case 'tiktok':
+      return <Music2 className="w-4 h-4" />;
+    case 'youtube':
+      return <Youtube className="w-4 h-4" />;
+    case 'linkedin':
+      return <Linkedin className="w-4 h-4" />;
+    case 'whatsapp':
+      return <MessageCircle className="w-4 h-4" />;
+    default:
+      return <Globe className="w-4 h-4" />;
+  }
+}
 
 interface ShowcaseAndPricingSectionProps {
   plans: SubscriptionPlan[];
   shops: ShopPublic[];
+  platformSettings?: PlatformSettings | null;
 }
 
 const STEPS = [
@@ -176,12 +206,15 @@ const FAQ_ITEMS = [
 export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps> = ({
   plans,
   shops,
+  platformSettings,
 }) => {
   const prefersReducedMotion = useReducedMotion();
   const [activeTabId, setActiveTabId] = useState<'overview' | 'inventory' | 'profit'>('overview');
   const [sampleCartIds, setSampleCartIds] = useState<string[]>(['s1']);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [openFaqIdx, setOpenFaqIdx] = useState<number | null>(0);
+  const platformName = (platformSettings?.platformName || 'BazaarPK').trim();
+  const platformSocials = getConfiguredSocialLinks(platformSettings?.socialLinks);
 
   const activeTab = DASHBOARD_TABS.find((t) => t.id === activeTabId) || DASHBOARD_TABS[0];
 
@@ -1008,19 +1041,62 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
           <div className="grid grid-cols-1 md:grid-cols-12 gap-10 pb-10 border-b border-white/10">
             <div className="md:col-span-5 space-y-4">
               <div className="flex items-center gap-2.5">
-                <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white font-extrabold text-sm flex items-center justify-center">
-                  B
-                </span>
-                <span className="font-extrabold text-base text-white tracking-tight">BazaarPK</span>
+                {platformSettings?.logoUrl ? (
+                  <img
+                    src={platformSettings.logoUrl}
+                    alt={platformName}
+                    className="w-8 h-8 rounded-lg object-cover border border-white/15 shrink-0"
+                  />
+                ) : (
+                  <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white font-extrabold text-sm flex items-center justify-center">
+                    {platformName.charAt(0).toUpperCase()}
+                  </span>
+                )}
+                <span className="font-extrabold text-base text-white tracking-tight">{platformName}</span>
               </div>
               <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-sm">
-                Multi-tenant retail business management and online storefront SaaS engineered for
-                growing Pakistani shops.
+                {platformSettings?.tagline ||
+                  'Multi-tenant retail business management and online storefront SaaS engineered for growing Pakistani shops.'}
               </p>
-              <div className="flex items-center gap-2 text-xs text-slate-300">
-                <ShieldCheck className="w-4 h-4 text-cyan-300 shrink-0" />
-                <span>Tenant-Isolated Cloud Storefronts · PKR Billing</span>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-300">
+                <span className="inline-flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-cyan-300 shrink-0" />
+                  Tenant-Isolated Cloud Storefronts
+                </span>
+                {platformSettings?.supportEmail && (
+                  <a
+                    href={`mailto:${platformSettings.supportEmail}`}
+                    className="inline-flex items-center gap-1.5 hover:text-white transition"
+                  >
+                    <Mail className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+                    {platformSettings.supportEmail}
+                  </a>
+                )}
+                {platformSettings?.supportPhone && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+                    {platformSettings.supportPhone}
+                  </span>
+                )}
               </div>
+
+              {platformSocials.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {platformSocials.map((entry) => (
+                    <a
+                      key={entry.platform}
+                      href={entry.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`${platformName} on ${entry.label}`}
+                      title={entry.label}
+                      className="w-9 h-9 rounded-lg border border-white/10 bg-white/5 hover:bg-indigo-500/20 hover:border-indigo-400/50 text-slate-300 hover:text-white flex items-center justify-center transition"
+                    >
+                      {renderPlatformSocialIcon(entry.platform)}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="md:col-span-3 space-y-3">
@@ -1074,6 +1150,18 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                     Flagship Demo Storefront
                   </Link>
                 </li>
+                {platformSettings?.websiteUrl && (
+                  <li>
+                    <a
+                      href={platformSettings.websiteUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-white transition"
+                    >
+                      {platformSettings.websiteUrl.replace(/^https?:\/\//i, '')}
+                    </a>
+                  </li>
+                )}
                 <li>
                   <Link to={`/s/${DEFAULT_SHOP_ID}/privacy`} className="hover:text-white transition">
                     Privacy Policy
@@ -1089,7 +1177,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
           </div>
 
           <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-            <p>© {new Date().getFullYear()} BazaarPK. Built for Pakistani Retail Businesses.</p>
+            <p>© {new Date().getFullYear()} {platformName}. Built for Pakistani Retail Businesses.</p>
             <p>COD · EasyPaisa · JazzCash · Self-Pickup</p>
           </div>
         </div>

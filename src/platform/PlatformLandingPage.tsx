@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { SubscriptionPlan, ShopPublic } from '../types';
-import { DEFAULT_SUBSCRIPTION_PLANS } from '../data/seedData';
-import { getSubscriptionPlans, getActiveDirectoryShopsPublic } from '../services/platformService';
+import { PlatformSettings, SubscriptionPlan, ShopPublic } from '../types';
+import { DEFAULT_PLATFORM_SETTINGS, DEFAULT_SUBSCRIPTION_PLANS } from '../data/seedData';
+import {
+  getSubscriptionPlans,
+  getActiveDirectoryShopsPublic,
+  getPlatformSettings,
+} from '../services/platformService';
 import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
 import { PublicNavbar } from './components/PublicNavbar';
 import { Hero3DShowcase } from './components/Hero3DShowcase';
@@ -13,6 +17,7 @@ export const PlatformLandingPage: React.FC = () => {
     DEFAULT_SUBSCRIPTION_PLANS.filter((p) => p.isActive)
   );
   const [shops, setShops] = useState<ShopPublic[]>([]);
+  const [platformSettings, setPlatformSettings] = useState<PlatformSettings>(DEFAULT_PLATFORM_SETTINGS);
 
   useEffect(() => {
     let active = true;
@@ -28,6 +33,12 @@ export const PlatformLandingPage: React.FC = () => {
       })
       .catch(() => {});
 
+    getPlatformSettings()
+      .then((stg) => {
+        if (active) setPlatformSettings(stg);
+      })
+      .catch(() => {});
+
     return () => {
       active = false;
     };
@@ -35,12 +46,16 @@ export const PlatformLandingPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#070B19] text-slate-900 flex flex-col">
-      <DynamicSeoHead mode="platform" />
-      <PublicNavbar />
+      <DynamicSeoHead mode="platform" platformSettings={platformSettings} />
+      <PublicNavbar platformSettings={platformSettings} />
       <main className="flex-1">
-        <Hero3DShowcase />
+        <Hero3DShowcase announcement={platformSettings.announcement} />
         <FeaturesAndSolutionsSection />
-        <ShowcaseAndPricingSection plans={plans} shops={shops} />
+        <ShowcaseAndPricingSection
+          plans={plans}
+          shops={shops}
+          platformSettings={platformSettings}
+        />
       </main>
     </div>
   );

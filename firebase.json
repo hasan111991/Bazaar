@@ -1,5 +1,6 @@
 {
   "firestore": {
+    "database": "ai-studio-bazaarpkecommerc-94c8ec32-7dba-4ff3-a6e4-6aa9072c863c",
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },

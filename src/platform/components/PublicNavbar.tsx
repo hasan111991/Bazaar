@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Menu, X } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
+import { PlatformSettings } from '../../types';
 
 interface NavAnchor {
   id: string;
@@ -18,11 +19,15 @@ const NAV_ANCHORS: NavAnchor[] = [
   { id: 'faq', label: 'FAQ' },
 ];
 
-export const PublicNavbar: React.FC = () => {
+export const PublicNavbar: React.FC<{ platformSettings?: PlatformSettings | null }> = ({
+  platformSettings,
+}) => {
   const { currentUser, shopMemberships } = useAuth();
   const prefersReducedMotion = useReducedMotion();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const brandName = (platformSettings?.platformName || 'BazaarPK').trim();
+  const brandLogoUrl = platformSettings?.logoUrl || '';
 
   useEffect(() => {
     const onScroll = () => {
@@ -84,13 +89,21 @@ export const PublicNavbar: React.FC = () => {
             }}
             className="flex items-center gap-2.5 group shrink-0"
           >
-            <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-violet-600 to-cyan-500 p-[1px] shadow-md shadow-indigo-500/25">
-              <span className="w-full h-full rounded-[11px] bg-[#0B1124] flex items-center justify-center text-white font-extrabold text-base tracking-tight">
-                B
+            {brandLogoUrl ? (
+              <img
+                src={brandLogoUrl}
+                alt={brandName}
+                className="w-9 h-9 rounded-xl object-cover border border-white/20 shadow-md shadow-indigo-500/25 shrink-0"
+              />
+            ) : (
+              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-violet-600 to-cyan-500 p-[1px] shadow-md shadow-indigo-500/25">
+                <span className="w-full h-full rounded-[11px] bg-[#0B1124] flex items-center justify-center text-white font-extrabold text-base tracking-tight">
+                  {brandName.charAt(0).toUpperCase()}
+                </span>
               </span>
-            </span>
+            )}
             <span className="font-extrabold text-lg tracking-tight text-white">
-              BazaarPK
+              {brandName}
             </span>
           </Link>
 
@@ -190,7 +203,7 @@ export const PublicNavbar: React.FC = () => {
             >
               <div>
                 <div className="flex items-center justify-between pb-6 border-b border-white/10">
-                  <span className="font-extrabold text-lg text-white tracking-tight">BazaarPK</span>
+                  <span className="font-extrabold text-lg text-white tracking-tight">{brandName}</span>
                   <button
                     type="button"
                     onClick={() => setMobileOpen(false)}

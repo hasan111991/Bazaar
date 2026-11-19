@@ -161,6 +161,16 @@ export interface ShopPublic {
   businessHours?: string;
   seoTitle?: string;
   seoDescription?: string;
+  ogImageUrl?: string;
+  websiteUrl?: string;
+  socialLinks?: {
+    facebook?: string;
+    instagram?: string;
+    whatsapp?: string;
+    tiktok?: string;
+    youtube?: string;
+    linkedin?: string;
+  };
   status: ShopStatus;
   theme?: ShopTheme;
   createdAt?: string;
@@ -229,12 +239,30 @@ export interface PlatformPayment {
 export interface PlatformSettings {
   platformName: string;
   tagline: string;
+  logoUrl?: string;
+  websiteUrl?: string;
+  announcement?: string;
   supportEmail: string;
   supportPhone: string;
   whatsappNumber: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  ogImageUrl?: string;
+  canonicalDomain?: string;
+  currency?: string;
+  currencySymbol?: string;
+  socialLinks?: {
+    facebook?: string;
+    instagram?: string;
+    tiktok?: string;
+    youtube?: string;
+    linkedin?: string;
+    whatsapp?: string;
+  };
   easypaisaDetails: MobileWalletDetails;
   jazzcashDetails: MobileWalletDetails;
   bankDetails: {
+    enabled?: boolean;
     bankName: string;
     accountTitle: string;
     accountNumber: string;
@@ -509,6 +537,7 @@ export interface SelfPickupSettings {
 export interface StoreSettings {
   siteName: string;
   logoUrl?: string;
+  websiteUrl?: string;
   primaryColor?: string;
   accentColor?: string;
   announcement: string;
@@ -525,7 +554,10 @@ export interface StoreSettings {
   businessHours?: string;
   seoTitle?: string;
   seoDescription?: string;
+  ogImageUrl?: string;
+  codEnabled?: boolean;
   bankDetails: {
+    enabled?: boolean;
     bankName: string;
     accountTitle: string;
     accountNumber: string;
@@ -539,7 +571,17 @@ export interface StoreSettings {
     instagram?: string;
     whatsapp?: string;
     tiktok?: string;
+    youtube?: string;
+    linkedin?: string;
   };
+}
+
+export interface NewsletterSubscriber {
+  id: string;
+  shopId: string;
+  email: string;
+  source?: string;
+  createdAt: string;
 }
 
 export interface Banner {

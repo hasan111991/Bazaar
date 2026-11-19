@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, LifeBuoy, Send } from 'lucide-react';
+import { CheckCircle2, Loader2, LifeBuoy, Send, AlertCircle } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -27,10 +27,12 @@ export const ShopProfilePage: React.FC = () => {
   const [ticketMessage, setTicketMessage] = useState('');
   const [submittingTicket, setSubmittingTicket] = useState(false);
   const [ticketNotice, setTicketNotice] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!shopId) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       const [msgs, lgs, tks] = await Promise.all([
         getShopContactMessages(shopId),
@@ -40,6 +42,8 @@ export const ShopProfilePage: React.FC = () => {
       setMessages(msgs);
       setLogs(lgs);
       setTickets(tks);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not load profile data.');
     } finally {
       setLoading(false);
     }
@@ -51,8 +55,13 @@ export const ShopProfilePage: React.FC = () => {
 
   const handlePasswordReset = async () => {
     if (!currentUser?.email) return;
-    await resetPassword(currentUser.email);
-    setResetSent(true);
+    setErrorMsg(null);
+    try {
+      await resetPassword(currentUser.email);
+      setResetSent(true);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not send password reset email.');
+    }
   };
 
   const handleSubmitTicket = async (e: React.FormEvent) => {
@@ -60,6 +69,7 @@ export const ShopProfilePage: React.FC = () => {
     if (isReadOnly || !ticketSubject.trim() || !ticketMessage.trim()) return;
     setSubmittingTicket(true);
     setTicketNotice(null);
+    setErrorMsg(null);
     try {
       await createSupportTicket({
         shopId,
@@ -75,6 +85,8 @@ export const ShopProfilePage: React.FC = () => {
       setTicketMessage('');
       setTicketNotice('Support ticket sent to BazaarPK Cloud Platform Administration.');
       await loadData();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to submit support ticket.');
     } finally {
       setSubmittingTicket(false);
     }
@@ -88,6 +100,12 @@ export const ShopProfilePage: React.FC = () => {
           Manage your security credentials, contact platform support, respond to customer inquiries, and audit recent actions.
         </p>
       </div>
+
+      {errorMsg && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" /> {errorMsg}
+        </div>
+      )}
 
       {/* Account Info */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">

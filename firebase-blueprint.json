@@ -14,13 +14,22 @@
     },
     "PlatformSettings": {
       "title": "Platform Settings",
-      "description": "SaaS platform configuration and Super Admin billing accounts",
+      "description": "SaaS platform configuration, branding, social links, SEO, and Super Admin billing accounts",
       "type": "object",
       "properties": {
         "platformName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "announcement": { "type": "string" },
         "supportEmail": { "type": "string" },
         "supportPhone": { "type": "string" },
         "whatsappNumber": { "type": "string" },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "ogImageUrl": { "type": "string" },
+        "canonicalDomain": { "type": "string" },
+        "socialLinks": { "type": "object" },
         "easypaisaDetails": { "type": "object" },
         "jazzcashDetails": { "type": "object" },
         "bankDetails": { "type": "object" },
@@ -120,6 +129,9 @@
         "businessHours": { "type": "string" },
         "seoTitle": { "type": "string" },
         "seoDescription": { "type": "string" },
+        "ogImageUrl": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "socialLinks": { "type": "object" },
         "status": { "type": "string", "enum": ["active", "inactive", "suspended"] },
         "theme": { "type": "object" },
         "createdAt": { "type": "string" },
@@ -295,6 +307,12 @@
     },
     "/shops/{shopId}/contact_messages/{messageId}": {
       "description": "Tenant customer helpdesk inquiries"
+    },
+    "/shops/{shopId}/newsletter_subscribers/{subId}": {
+      "description": "Tenant storefront newsletter subscribers"
+    },
+    "/shops/{shopId}/payment_receipts/{receiptId}": {
+      "description": "Private checkout payment receipt images accessible only to shop members and Super Admin"
     },
     "/shops/{shopId}/staff/{uid}": {
       "description": "Tenant staff role & module permissions"

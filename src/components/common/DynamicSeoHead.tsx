@@ -1,11 +1,12 @@
 import React, { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Product, ShopPublic, StoreSettings } from '../../types';
+import { PlatformSettings, Product, ShopPublic, StoreSettings } from '../../types';
 import { buildPlatformSeoTags, buildShopSeoTags, GeneratedSeoTags } from '../../utils/seo';
 
 interface DynamicSeoHeadProps {
   shop?: ShopPublic | null;
   settings?: Partial<StoreSettings> | null;
+  platformSettings?: PlatformSettings | null;
   product?: Product | null;
   pageTitle?: string;
   pageDescription?: string;
@@ -91,6 +92,7 @@ export function applySeoTagsToDocument(tags: GeneratedSeoTags): void {
 export const DynamicSeoHead: React.FC<DynamicSeoHeadProps> = ({
   shop,
   settings,
+  platformSettings,
   product,
   pageTitle,
   pageDescription,
@@ -108,7 +110,7 @@ export const DynamicSeoHead: React.FC<DynamicSeoHeadProps> = ({
 
     const tags =
       mode === 'platform'
-        ? buildPlatformSeoTags(canonicalUrl)
+        ? buildPlatformSeoTags(canonicalUrl, platformSettings)
         : buildShopSeoTags({
             shop,
             settings,
@@ -127,6 +129,7 @@ export const DynamicSeoHead: React.FC<DynamicSeoHeadProps> = ({
     shop?.name,
     shop?.city,
     shop?.logoUrl,
+    shop?.ogImageUrl,
     shop?.seoTitle,
     shop?.seoDescription,
     shop?.theme?.heroSubtitle,
@@ -134,7 +137,14 @@ export const DynamicSeoHead: React.FC<DynamicSeoHeadProps> = ({
     settings?.seoTitle,
     settings?.seoDescription,
     settings?.logoUrl,
+    settings?.ogImageUrl,
     settings?.aboutUs,
+    platformSettings?.platformName,
+    platformSettings?.seoTitle,
+    platformSettings?.seoDescription,
+    platformSettings?.ogImageUrl,
+    platformSettings?.logoUrl,
+    platformSettings?.canonicalDomain,
     product?.id,
     product?.title,
     product?.regularPrice,

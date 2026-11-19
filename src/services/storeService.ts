@@ -101,7 +101,7 @@ export async function getStoreSettings(shopId: string = DEFAULT_SHOP_ID): Promis
   return tenant.getShopPublicSettings(shopId);
 }
 
-export async function updateStoreSettings(settings: StoreSettings, shopId: string = DEFAULT_SHOP_ID): Promise<void> {
+export async function updateStoreSettings(settings: Partial<StoreSettings>, shopId: string = DEFAULT_SHOP_ID): Promise<StoreSettings> {
   return tenant.updateShopSettings(shopId, settings);
 }
 

@@ -102,6 +102,13 @@ service firebase.storage {
       allow delete: if isShopAdmin(shopId);
     }
 
+    // Platform-Level Branding & OG Images (Public Read, Super Admin Write/Delete)
+    match /platform/brand/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isSuperAdmin() && isValidImageUpload();
+      allow delete: if isSuperAdmin();
+    }
+
     // Platform-Level Subscription Proofs (Restricted exclusively to Super Admin & submitting Shop Admin)
     match /platform/payments/{shopId}/{fileName} {
       allow read: if isShopAdmin(shopId);

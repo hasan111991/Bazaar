@@ -40,6 +40,7 @@ import {
   SupportTicket,
 } from '../types';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
+import { normalizeAndValidateSocialLinks, normalizeOptionalHttpUrl } from '../utils/socialLinks';
 
 export function stripUndefined<T>(obj: T): T {
   if (Array.isArray(obj)) {
@@ -75,6 +76,9 @@ export function toShopPublic(shop: Shop | ShopPublic, publicSettings?: Partial<S
     businessHours: publicSettings?.businessHours || ('businessHours' in shop ? shop.businessHours : undefined),
     seoTitle: publicSettings?.seoTitle || ('seoTitle' in shop ? shop.seoTitle : undefined),
     seoDescription: publicSettings?.seoDescription || ('seoDescription' in shop ? shop.seoDescription : undefined),
+    ogImageUrl: publicSettings?.ogImageUrl || ('ogImageUrl' in shop ? shop.ogImageUrl : undefined),
+    websiteUrl: publicSettings?.websiteUrl || ('websiteUrl' in shop ? shop.websiteUrl : undefined),
+    socialLinks: publicSettings?.socialLinks || ('socialLinks' in shop ? shop.socialLinks : undefined),
     theme: shop.theme,
     status: shop.status,
     createdAt: shop.createdAt,
@@ -214,6 +218,10 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
       return {
         ...DEFAULT_PLATFORM_SETTINGS,
         ...data,
+        socialLinks: {
+          ...(DEFAULT_PLATFORM_SETTINGS.socialLinks || {}),
+          ...(data.socialLinks || {}),
+        },
         easypaisaDetails: {
           ...DEFAULT_PLATFORM_SETTINGS.easypaisaDetails,
           ...(data.easypaisaDetails || {}),
@@ -229,19 +237,87 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
       };
     }
     return DEFAULT_PLATFORM_SETTINGS;
-  } catch {
+  } catch (err) {
+    console.warn('Could not load platform settings from Firestore, falling back to defaults:', err);
     return DEFAULT_PLATFORM_SETTINGS;
   }
 }
 
-export async function updatePlatformSettings(settings: PlatformSettings): Promise<void> {
+export async function getPlatformSettingsStrict(): Promise<{ settings: PlatformSettings; fromFirestore: boolean; error?: string }> {
   try {
+    const snap = await getDoc(doc(db, 'platform_settings', 'general'));
+    if (snap.exists()) {
+      const data = snap.data() as Partial<PlatformSettings>;
+      return {
+        fromFirestore: true,
+        settings: {
+          ...DEFAULT_PLATFORM_SETTINGS,
+          ...data,
+          socialLinks: {
+            ...(DEFAULT_PLATFORM_SETTINGS.socialLinks || {}),
+            ...(data.socialLinks || {}),
+          },
+          easypaisaDetails: {
+            ...DEFAULT_PLATFORM_SETTINGS.easypaisaDetails,
+            ...(data.easypaisaDetails || {}),
+          },
+          jazzcashDetails: {
+            ...DEFAULT_PLATFORM_SETTINGS.jazzcashDetails,
+            ...(data.jazzcashDetails || {}),
+          },
+          bankDetails: {
+            ...DEFAULT_PLATFORM_SETTINGS.bankDetails,
+            ...(data.bankDetails || {}),
+          },
+        },
+      };
+    }
+    return { fromFirestore: false, settings: DEFAULT_PLATFORM_SETTINGS };
+  } catch (err: any) {
+    return {
+      fromFirestore: false,
+      settings: DEFAULT_PLATFORM_SETTINGS,
+      error: err?.message || 'Failed to read platform settings from Firestore.',
+    };
+  }
+}
+
+export async function updatePlatformSettings(settings: Partial<PlatformSettings>): Promise<PlatformSettings> {
+  const normalizedPayload: Partial<PlatformSettings> = { ...settings };
+  if (settings.socialLinks !== undefined) {
+    normalizedPayload.socialLinks = normalizeAndValidateSocialLinks(settings.socialLinks);
+  }
+  if (settings.websiteUrl !== undefined) {
+    normalizedPayload.websiteUrl = normalizeOptionalHttpUrl(settings.websiteUrl, 'Platform Website URL');
+  }
+
+  try {
+    const existing = await getPlatformSettings();
+    const updatedAt = new Date().toISOString();
     await setDoc(
       doc(db, 'platform_settings', 'general'),
-      stripUndefined({ ...settings, updatedAt: new Date().toISOString() }),
+      stripUndefined({ ...normalizedPayload, updatedAt }),
       { merge: true }
     );
     await logPlatformActivity('Updated Platform Settings', 'settings', 'general', 'Updated Super Admin billing & platform info');
+    return {
+      ...existing,
+      ...normalizedPayload,
+      socialLinks: normalizedPayload.socialLinks ?? existing.socialLinks,
+      easypaisaDetails: {
+        ...existing.easypaisaDetails,
+        ...(normalizedPayload.easypaisaDetails || {}),
+      },
+      jazzcashDetails: {
+        ...existing.jazzcashDetails,
+        ...(normalizedPayload.jazzcashDetails || {}),
+      },
+      bankDetails: {
+        ...existing.bankDetails,
+        ...(normalizedPayload.bankDetails || {}),
+      },
+      updatedAt,
+    };
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'platform_settings/general');
   }

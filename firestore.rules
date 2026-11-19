@@ -142,6 +142,7 @@ service cloud.firestore {
           'id', 'slug', 'name', 'businessType', 'logoUrl', 'city',
           'publicContactPhone', 'publicSupportEmail', 'storefrontAddress',
           'businessHours', 'seoTitle', 'seoDescription',
+          'ogImageUrl', 'websiteUrl', 'socialLinks',
           'theme', 'status', 'createdAt', 'updatedAt'
         ]) &&
         data.id == shopId &&
@@ -212,6 +213,20 @@ service cloud.firestore {
         incoming().subject is string && incoming().subject.size() >= 1 && incoming().subject.size() <= 200 &&
         incoming().message is string && incoming().message.size() >= 1 && incoming().message.size() <= 4000;
       allow update, delete: if isValidId(ticketId) && isSuperAdmin();
+    }
+
+    // Private Subscription Payment Receipts (Never public; Super Admin & uploading owner only)
+    match /platform_payment_receipts/{receiptId} {
+      allow get, list: if isValidId(receiptId) && (
+        isSuperAdmin() ||
+        (isSignedIn() && resource.data.ownerId == request.auth.uid)
+      );
+      allow create: if isValidId(receiptId) && isSignedIn() &&
+        incoming().keys().hasAll(['id', 'shopId', 'ownerId', 'contentType', 'base64Data', 'createdAt']) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().contentType is string && incoming().contentType.matches('image/(jpeg|jpg|png|webp|gif)') &&
+        incoming().base64Data is string && incoming().base64Data.size() <= 550000;
+      allow update, delete: if isValidId(receiptId) && isSuperAdmin();
     }
 
     // ====================================================
@@ -529,6 +544,34 @@ service cloud.firestore {
       match /contact_messages/{messageId} {
         allow create: if isValidId(messageId) && isValidContactMessage(incoming());
         allow read, update, delete: if isValidId(messageId) && isShopMember(shopId);
+      }
+
+      // Shop Newsletter Subscribers (public email signup, tenant read/manage only)
+      match /newsletter_subscribers/{subId} {
+        allow create: if isValidId(subId) &&
+          incoming().keys().hasAll(['id', 'shopId', 'email', 'createdAt']) &&
+          incoming().shopId == shopId &&
+          incoming().email is string &&
+          incoming().email.size() >= 5 &&
+          incoming().email.size() <= 150 &&
+          incoming().email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+        allow read, update, delete: if isValidId(subId) && isShopMember(shopId);
+      }
+
+      // Shop Private Checkout Payment Receipts (Create-only during checkout; NEVER public read)
+      match /payment_receipts/{receiptId} {
+        allow get, list: if isValidId(receiptId) && (
+          isShopMember(shopId) ||
+          (isSignedIn() && resource.data.uploaderUid == request.auth.uid)
+        );
+        allow create: if isValidId(receiptId) &&
+          incoming().keys().hasAll(['id', 'shopId', 'orderSessionId', 'contentType', 'base64Data', 'createdAt']) &&
+          incoming().shopId == shopId &&
+          incoming().contentType is string &&
+          incoming().contentType.matches('image/(jpeg|jpg|png|webp|gif)') &&
+          incoming().base64Data is string &&
+          incoming().base64Data.size() <= 500000;
+        allow update, delete: if isValidId(receiptId) && isShopAdmin(shopId);
       }
 
       // Shop Customers Directory

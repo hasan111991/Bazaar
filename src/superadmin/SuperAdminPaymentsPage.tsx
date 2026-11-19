@@ -9,6 +9,7 @@ import {
 } from '../services/platformService';
 import { PlatformPayment, PlatformSettings } from '../types';
 import { formatPKR, DEFAULT_PLATFORM_SETTINGS } from '../data/seedData';
+import { PrivateReceiptImage } from '../components/common/PrivateReceiptImage';
 
 export const SuperAdminPaymentsPage: React.FC = () => {
   const [payments, setPayments] = useState<PlatformPayment[]>([]);
@@ -25,10 +26,13 @@ export const SuperAdminPaymentsPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setActionError(null);
     try {
       const [pList, stg] = await Promise.all([getAllPlatformPayments(), getPlatformSettings()]);
       setPayments(pList);
       setSettings(stg);
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not load subscription payment queue.');
     } finally {
       setLoading(false);
     }
@@ -44,9 +48,16 @@ export const SuperAdminPaymentsPage: React.FC = () => {
     e.preventDefault();
     setSavingSettings(true);
     setSettingsSavedMsg(false);
+    setActionError(null);
     try {
-      await updatePlatformSettings(settings);
+      await updatePlatformSettings({
+        easypaisaDetails: settings.easypaisaDetails,
+        jazzcashDetails: settings.jazzcashDetails,
+        bankDetails: settings.bankDetails,
+      });
       setSettingsSavedMsg(true);
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not save billing account details.');
     } finally {
       setSavingSettings(false);
     }
@@ -289,7 +300,11 @@ export const SuperAdminPaymentsPage: React.FC = () => {
           onClick={() => setProofPreview(null)}
         >
           <div className="bg-white rounded-2xl p-3 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
-            <img src={proofPreview} alt="Payment Receipt" className="w-full max-h-[75vh] object-contain rounded-xl" />
+            <PrivateReceiptImage
+              src={proofPreview}
+              alt="Payment Receipt"
+              className="w-full max-h-[75vh] object-contain rounded-xl bg-slate-50"
+            />
             <button
               type="button"
               onClick={() => setProofPreview(null)}
